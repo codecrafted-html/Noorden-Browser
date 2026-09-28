@@ -1,0 +1,16 @@
+node_modules/
+dist/
+out/
+release/
+releases/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+*.dmg
+*.exe
+*.msi
+*.AppImage
+*.zip
+*.7z
