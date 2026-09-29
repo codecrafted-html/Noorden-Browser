@@ -1,0 +1,99 @@
+name: Bouw en publiceer Noorder Browser
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Bouw DMG
+        run: npx electron-builder --mac dmg --${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Noorder-macOS-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Bouw Windows-installatie en ZIP
+        run: npx electron-builder --win nsis zip --x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Noorder-Windows-x64
+          path: |
+            dist/*.exe
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Noorder-*
+          path: release-assets
+          merge-multiple: true
+      - name: Controleer versienummer
+        id: version
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "Git-tag $GITHUB_REF_NAME verschilt van app-versie $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Publiceer alle downloads bij GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          cp build/icon.png release-assets/Noorder-logo.png
+          cp src/logo.svg release-assets/Noorder-logo.svg
+          assets=(release-assets/*.dmg release-assets/*.exe release-assets/*.zip release-assets/*.png release-assets/*.svg)
+          if [ "${#assets[@]}" -lt 4 ]; then
+            echo 'Verwachte Mac- en Windows-bestanden ontbreken' >&2
+            exit 1
+          fi
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Noorder Browser ${RELEASE_TAG#v}" --notes 'Mac: open de DMG en sleep Noorder Browser naar Programma’s. Windows: gebruik het installatiebestand of pak de ZIP uit. Niet door Apple genotariseerd; macOS kan bij het eerste openen om toestemming via Privacy en beveiliging vragen.'
+          fi
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name'

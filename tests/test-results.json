@@ -1,0 +1,27 @@
+{
+  "date": "2026-09-29T17:06:15.505Z",
+  "platform": "linux",
+  "electron": "44.4.5",
+  "checks": [
+    "Navigation and back/forward",
+    "Website favicons in tabs and bookmarks",
+    "Bookmarks",
+    "Dark and light UI",
+    "Sleep and restore navigation history",
+    "Trusted input protects forms",
+    "Pinned tabs and exceptions protected",
+    "Automatic inactivity sweep",
+    "Five fixture pages release renderers",
+    "Blank tabs use no remote renderer"
+  ],
+  "memoryFixture": {
+    "pages": 5,
+    "allocationMBPerPage": 24,
+    "beforeMB": null,
+    "afterMB": null,
+    "loadedWebContentsBefore": 5,
+    "loadedWebContentsAfter": 0,
+    "note": "OS memory metrics are unavailable in this container; no RAM benchmark claim. All five remote WebContents were destroyed and a sleeping tab restored successfully."
+  },
+  "pageErrors": []
+}

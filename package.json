@@ -1,0 +1,69 @@
+{
+  "name": "noorder-browser",
+  "version": "2.1.0",
+  "description": "Chrome-achtige browser met geheugenbesparing voor macOS en Windows",
+  "main": "src/main.js",
+  "author": "Sven",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac dmg zip",
+    "dist:win": "electron-builder --win nsis portable",
+    "test": "node --test tests/policy.test.js",
+    "dist:win:zip": "electron-builder --win zip --x64"
+  },
+  "devDependencies": {
+    "electron": "44.4.5",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "be.noorder.browser",
+    "productName": "Noorder Browser",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Noorder gebruikt de microfoon alleen wanneer je een website daarvoor toestemming geeft.",
+        "NSCameraUsageDescription": "Noorder gebruikt de camera alleen wanneer je een website daarvoor toestemming geeft."
+      },
+      "artifactName": "Noorder-Browser-${version}-macOS-${arch}.${ext}",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "dmg": {
+      "title": "Noorder Browser ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  }
+}
