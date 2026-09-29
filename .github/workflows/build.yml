@@ -33,7 +33,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Bouw DMG
-        run: npx electron-builder --mac dmg --${{ matrix.arch }}
+        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: Noorder-macOS-${{ matrix.arch }}
@@ -51,7 +51,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Bouw Windows-installatie en ZIP
-        run: npx electron-builder --win nsis zip --x64
+        run: npx electron-builder --win nsis zip --x64 --publish never
       - uses: actions/upload-artifact@v4
         with:
           name: Noorder-Windows-x64
