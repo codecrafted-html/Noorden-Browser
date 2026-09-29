@@ -1,11 +1,11 @@
-# Noorder Browser 2.1
+# Noorder Browser 2.2
 
 Een zelfstandige desktopbrowser voor macOS en Windows, met een Chrome-achtige interface en geheugenbesparing. Dit is een ontwikkelversie, geen volledige vervanger voor alle Chrome-functies.
 
 ## Wat is nieuw?
 
-- Afgeronde tabs en adresbalk, bladwijzerbalk en lichte/donkere weergave. Website-favicons verschijnen in tabs en bladwijzers; een eigen kompaslogo wordt gebruikt voor Noorder en de app.
-- Startpagina met zoekfunctie en snelkoppelingen.
+- Afgeronde tabs en adresbalk, bladwijzerbalk en standaard donkere weergave (licht blijft instelbaar). Website-favicons verschijnen in tabs en bladwijzers; een eigen kompaslogo wordt gebruikt voor Noorder en de app.
+- Startpagina met zoekfunctie en snelkoppelingen. Websites ontvangen Nederlands (België) als voorkeurstaal; Google-zoekopdrachten vragen Nederlandse resultaten uit België. Sites die je land via IP-adres, account of cookies bepalen kunnen een andere regio blijven tonen.
 - Tabs openen, sluiten, verslepen, vastzetten en terughalen.
 - Prestatiepagina met geladen/slapende tabs en een RAM-indicatie wanneer het besturingssysteem die beschikbaar stelt.
 - Ongebruikte tabs slapen standaard na 5 minuten (2, 5, 15 of uit). Hun WebContents worden gesloten; bij activeren wordt de pagina opnieuw geladen, met herstel van de navigatiegeschiedenis.
@@ -51,7 +51,7 @@ Bouwen op Windows:
 npm run dist:win
 ```
 
-De repository bevat de actuele broncode. **Actions → Bouw en publiceer Noorder Browser → Run workflow** bouwt op macOS en Windows en zet beide DMG’s, het Windows-installatiebestand en de Windows-ZIP automatisch bij [Releases](https://github.com/codecrafted-html/Noorden-Browser/releases). Een tag zoals `v2.1.0` start dezelfde releaseworkflow. GitHub voegt automatisch een broncodearchief toe.
+De repository bevat de actuele broncode. **Actions → Bouw en publiceer Noorder Browser → Run workflow** bouwt op macOS en Windows en zet beide DMG’s, het Windows-installatiebestand en de Windows-ZIP automatisch bij [Releases](https://github.com/codecrafted-html/Noorden-Browser/releases). Een tag zoals `v2.2.0` start dezelfde releaseworkflow. GitHub voegt automatisch een broncodearchief toe.
 
 ## Sneltoetsen
 
@@ -77,4 +77,4 @@ De testrun controleerde navigatie/terug/vooruit, bladwijzers, lichte/donkere UI,
 
 Websites krijgen geen Node.js of browser-IPC-toegang. Locatie en onbekende sitepermissies blijven standaard uitgeschakeld. Extensies worden alleen vanuit een uitgepakte lokale map geladen en Electron ondersteunt slechts een deel van de Chrome-extensie-API. De wachtwoordenoptie opent de beheerder van het besturingssysteem; er is geen ingebouwde autofill. Synchronisatie, DRM-ondersteuning, beveiligingsreputatieservice en automatische app-updates ontbreken. Google Lens opent de Lens-website; Cast naar een televisie is niet ingebouwd. Webcompatibiliteit is daardoor niet gelijk aan die van Google Chrome. Werk Electron regelmatig bij en test opnieuw voordat je dit breed distribueert.
 
-Gebouwd met Electron 44.4.5. App-versie 2.1.0.
+Gebouwd met Electron 44.4.5. App-versie 2.2.0.

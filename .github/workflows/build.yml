@@ -97,7 +97,7 @@ jobs:
             exit 1
           fi
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Noorder Browser ${RELEASE_TAG#v}" --notes 'Mac: open de DMG en sleep Noorder Browser naar Programma’s. Windows: gebruik het installatiebestand of pak de ZIP uit. Niet door Apple genotariseerd; macOS kan bij het eerste openen om toestemming via Privacy en beveiliging vragen.'
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Noorder Browser ${RELEASE_TAG#v}" --notes 'Mac: open de DMG en sleep Noorder Browser naar Programma’s. Versie 2.2 start donker en biedt Nederlands (België) aan websites aan. Windows: gebruik het installatiebestand of pak de ZIP uit. Niet door Apple genotariseerd; macOS kan bij het eerste openen om toestemming via Privacy en beveiliging vragen.'
           fi
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name'

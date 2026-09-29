@@ -6,6 +6,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { defaults, normalizeSettings, addressToUrl, isWebUrl, host, sleepReason } = require('./policy');
+app.commandLine.appendSwitch('lang','nl-BE');
 const testMode = !app.isPackaged && process.env.NOORDER_TEST === '1';
 if (testMode && process.env.NOORDER_TEST_PROFILE) app.setPath('userData', process.env.NOORDER_TEST_PROFILE);
 const childProfile=process.env.NOORDER_CHILD_PROFILE;
@@ -18,7 +19,8 @@ const alive = t => !!t?.view?.webContents && !t.view.webContents.isDestroyed();
 const file = name => path.join(app.getPath('userData'), name + '.json');
 function save() { try { fs.mkdirSync(app.getPath('userData'), {recursive:true}); for(const [name,data] of Object.entries({settings,bookmarks,history,downloads,permissions,groups,extensions}))fs.writeFileSync(file(name), JSON.stringify(data)); } catch (e) { console.error('Bewaren mislukt', e.message); } }
 function read() {
-  try { settings = normalizeSettings(JSON.parse(fs.readFileSync(file('settings'), 'utf8'))); } catch {}
+  let migratedTheme=false;
+  try { const stored=JSON.parse(fs.readFileSync(file('settings'), 'utf8'));settings=normalizeSettings(stored);if(stored.themeVersion!==2){settings.theme='dark';migratedTheme=true;} } catch {}
   try { bookmarks = JSON.parse(fs.readFileSync(file('bookmarks'), 'utf8')).filter(b => isWebUrl(b?.url) && typeof b.title === 'string').slice(0,200).map(b => ({title:b.title,url:b.url,favicon:validFavicon(b.favicon)?b.favicon:''})); } catch { bookmarks = []; }
   try { history=JSON.parse(fs.readFileSync(file('history'),'utf8')).filter(h=>isWebUrl(h?.url) && Number.isFinite(h.time)).slice(0,500); } catch {history=[];}
   try { downloads=JSON.parse(fs.readFileSync(file('downloads'),'utf8')).filter(d=>typeof d?.name==='string' && typeof d.path==='string').slice(0,200).map(d=>({...d,state:d.state==='progressing'?'interrupted':d.state})); } catch {downloads=[];}
@@ -27,6 +29,7 @@ function read() {
   try {const data=JSON.parse(fs.readFileSync(file('groups'),'utf8'));groups=typeof data==='object'&&data?data:{};}catch{groups={};}
   try {extensions=JSON.parse(fs.readFileSync(file('extensions'),'utf8')).filter(e=>typeof e?.path==='string'&&path.isAbsolute(e.path)).slice(0,20);}catch{extensions=[];}
   nativeTheme.themeSource = settings.theme;
+  if(migratedTheme)save();
 }
 function reason(t, manual = false) {
   let audible = false, frameCount = 1;
@@ -350,7 +353,7 @@ function shortcut(event,input){if(input.type!=='keyDown')return;const mod=proces
   else if(input.alt&&key==='left')command('back');else if(input.alt&&key==='right')command('forward');
   else handled=false;if(handled)event.preventDefault();
 }
-function createWindow(){win=new BrowserWindow({width:1280,height:850,minWidth:680,minHeight:480,title:'Noorder Browser',backgroundColor:'#f8fafd',icon:path.join(__dirname,'logo.png'),
+function createWindow(){win=new BrowserWindow({width:1280,height:850,minWidth:680,minHeight:480,title:'Noorder Browser',backgroundColor:'#151b27',icon:path.join(__dirname,'logo.png'),
   ...(process.platform==='darwin'?{titleBarStyle:'hidden',trafficLightPosition:{x:16,y:16}}:{frame:false}),
   webPreferences:{preload:path.join(__dirname,'preload.js'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
   win.webContents.on('will-navigate',e=>e.preventDefault());win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('before-input-event',shortcut);
@@ -361,6 +364,7 @@ function createWindow(){win=new BrowserWindow({width:1280,height:850,minWidth:68
 }
 app.whenReady().then(()=>{
   read();Menu.setApplicationMenu(process.platform==='darwin'?Menu.buildFromTemplate([{role:'appMenu'},{role:'editMenu'}]):null);
+  session.defaultSession.setUserAgent(session.defaultSession.getUserAgent(),'nl-BE,nl,en-US,en');
   for(const extension of extensions)void session.defaultSession.extensions.loadExtension(extension.path).then(loaded=>{extension.id=loaded.id;extension.name=loaded.name;broadcast();}).catch(()=>{extensions=extensions.filter(e=>e!==extension);save();});
   session.defaultSession.setPermissionRequestHandler((wc,permission,callback,details)=>{
     const site=origin(wc.getURL()),requesting=origin(details?.requestingUrl||wc.getURL()),key=permissionKey(permission,details);

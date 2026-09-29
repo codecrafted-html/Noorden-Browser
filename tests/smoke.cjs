@@ -22,8 +22,8 @@ const server = http.createServer((req,res)=>{
   const wait = async fn=>{for(let i=0;i<100;i++){const s=await snap();if(fn(s))return s;await new Promise(r=>setTimeout(r,100));}const last=await snap();console.error('last state',JSON.stringify({activeId:last.activeId,url:last.url,tab:last.tabs.find(t=>t.id===last.activeId)&&{url:last.tabs.find(t=>t.id===last.activeId).url,loading:last.tabs.find(t=>t.id===last.activeId).loading,icon:!!last.tabs.find(t=>t.id===last.activeId).favicon},bookmarks:last.bookmarks.map(b=>({url:b.url,icon:!!b.favicon}))}));throw new Error('Timed out waiting for state');};
   try {
     await page.locator('#home-page').waitFor();await wait(s=>s.tabs.length===1);assert.equal((await snap()).live,0);
-    await page.screenshot({path:path.join(output,'Noorder-Browser-licht.png')});
-    await act('setting',{theme:'dark'});await page.waitForFunction(()=>document.body.classList.contains('dark'));await page.screenshot({path:path.join(output,'Noorder-Browser-donker.png')});await act('setting',{theme:'light'});
+    assert.equal((await snap()).settings.theme,'dark');await page.waitForFunction(()=>document.body.classList.contains('dark'));await page.screenshot({path:path.join(output,'Noorder-Browser-donker.png')});
+    await act('setting',{theme:'light'});await page.waitForFunction(()=>!document.body.classList.contains('dark'));await page.screenshot({path:path.join(output,'Noorder-Browser-licht.png')});
     await page.locator('#address').fill(base+'/first');await page.locator('#address').press('Enter');await wait(s=>!s.loading&&s.tabs[0].title==='Test /first'&&s.tabs[0].favicon.startsWith('data:image/png;base64,'));
     assert.equal(await page.locator('.tab.active .tab-icon-image').isVisible(),true);await page.screenshot({path:path.join(output,'Noorder-Browser-favicons.png')});
     await act('navigate',base+'/second');await wait(s=>!s.loading&&s.canBack);await act('back');await wait(s=>!s.loading&&s.url.endsWith('/first'));await act('forward');await wait(s=>!s.loading&&s.url.endsWith('/second'));

@@ -1,5 +1,5 @@
 'use strict';
-const defaults = { sleepMinutes: 5, bookmarkBar: true, theme: 'system', exceptions: [] };
+const defaults = { sleepMinutes: 5, bookmarkBar: true, theme: 'dark', themeVersion: 2, exceptions: [] };
 function isWebUrl(value) { try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !!u.hostname; } catch { return false; } }
 function addressToUrl(value) {
   const s = String(value || '').trim(); if (!s) return '';
@@ -8,12 +8,12 @@ function addressToUrl(value) {
     const u = (/^(localhost|127\.0\.0\.1)(:|\/|$)/i.test(s) ? 'http://' : 'https://') + s;
     if (isWebUrl(u)) return new URL(u).href;
   }
-  return 'https://www.google.com/search?q=' + encodeURIComponent(s);
+  return 'https://www.google.com/search?q=' + encodeURIComponent(s) + '&hl=nl&gl=be';
 }
 function host(value) { try { return new URL(value).hostname; } catch { return ''; } }
 function normalizeSettings(value = {}) {
   return { sleepMinutes: [0,2,5,15].includes(value.sleepMinutes) ? value.sleepMinutes : 5, bookmarkBar: value.bookmarkBar !== false,
-    theme: ['light','dark','system'].includes(value.theme) ? value.theme : 'system',
+    theme: ['light','dark','system'].includes(value.theme) ? value.theme : 'dark', themeVersion: 2,
     exceptions: Array.isArray(value.exceptions) ? [...new Set(value.exceptions.filter(x => typeof x === 'string' && /^[a-z0-9.-]+$/i.test(x)).map(x => x.toLowerCase()))].slice(0,200) : [] };
 }
 function sleepReason(t, settings = defaults, now = Date.now(), manual = false) {
