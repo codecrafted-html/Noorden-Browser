@@ -58,7 +58,7 @@
       if(update.phase==='ready')updateActions.push(['Herstart en installeer',()=>send('update-install')]);
       else if(!['development','downloading','available','checking'].includes(update.phase))updateActions.push(['Controleren',()=>send('update-check')]);
       updateActions.push(['Releases openen',()=>send('update-open-release')]);
-      list.append(utilityRow('Automatische updates',update.message,'reload',updateActions));
+      const updateRow=utilityRow('Automatische updates',update.message,'reload',updateActions);updateRow.classList.add('update-row');list.append(updateRow);
     }
     if(kind==='help'){list.append(utilityRow('Navigeren','Ctrl/⌘ + L · adresbalk, Ctrl/⌘ + T · nieuw tabblad','globe'));list.append(utilityRow('Zoeken en afdrukken','Ctrl/⌘ + F · zoeken op pagina, Ctrl/⌘ + P · afdrukken','search'));list.append(utilityRow('Tabbladen','Ctrl/⌘ + W · sluiten, Ctrl/⌘ + Shift + T · herstellen','plus'));}
     if(kind==='groups'){for(const [id,group] of Object.entries(s.groups)){const count=s.tabs.filter(t=>t.group===id).length;list.append(utilityRow(group.name,count+' tabblad'+(count===1?'':'en'),'folder',[['Openen',()=>send('group-open',id)],['Verwijderen',()=>send('group-delete',id)]]));}list.append(utilityRow('Nieuwe groep','Rechtermuisklik op een tabblad en kies Nieuwe groep met dit tabblad.','plus'));}

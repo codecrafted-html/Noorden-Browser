@@ -25,3 +25,13 @@ test('handles update errors and avoids checks in development and private windows
     await inactive.check();assert.equal(inactive.state.phase,'development');inactive.dispose();
   }
 });
+
+test('uses the direct GitHub release feed when the API check fails',async()=>{
+  const updater=new EventEmitter();let feed='',calls=0;
+  updater.setFeedURL=options=>{feed=options.url;};
+  updater.checkForUpdates=async()=>{calls++;if(calls===1)throw Object.assign(new Error('rate limited'),{statusCode:403});updater.emit('update-not-available');};
+  const manager=createUpdateManager({app:{isPackaged:true,getVersion:()=> '2.3.2'},platform:'darwin',notify:()=>{},openRelease:()=>{},updaterFactory:()=>updater});
+  await manager.check();
+  assert.equal(calls,2);assert.equal(feed,RELEASES+'/download/');assert.equal(manager.state.phase,'current');
+  manager.dispose();
+});

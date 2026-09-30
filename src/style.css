@@ -23,3 +23,4 @@ body.dark{color-scheme:dark;--strip:#202938;--chrome:#293343;--page:#1e2735;--te
 
 .menu-zoom button:nth-of-type(2){width:49px;border-radius:16px;font-size:12px}
 .update-pill{flex:none;white-space:nowrap;padding:7px 10px;border-radius:17px;background:var(--green-bg);color:var(--green);font-size:11px;font-weight:600}.update-pill:hover{filter:brightness(1.1)}
+.utility-item.update-row small{white-space:normal;overflow:visible;line-height:1.45}
