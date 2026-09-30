@@ -39,7 +39,7 @@
     list.append(separator());
     add('Afdrukken','print','print',mod+'P');add('Deze pagina doorzoeken','search','find',mod+'F');add('Vertalen naar Nederlands','globe','translate');add('Zoeken met Google Lens','search','lens');add('Opslaan als PDF','download','save-pdf');add('Link kopiëren','clipboard','share-link');
     list.append(separator());
-    add('Help','globe','help');add('Instellingen','settings','settings');
+    add('Controleer op updates','reload','update-check');add('Help','globe','help');add('Instellingen','settings','settings');
   }
   function utilityRow(title,detail,icon,actions=[]){const row=document.createElement('div'),body=document.createElement('div'),strong=document.createElement('strong'),small=document.createElement('small');row.className='utility-item';strong.textContent=title;small.textContent=detail;body.append(strong,small);row.append(svg(icon),body);for(const [label,fn] of actions){const b=document.createElement('button');b.textContent=label;b.onclick=fn;row.append(b);}return row;}
   function renderUtility(s){const kind=s.kind;if(!labels[kind])return;
@@ -53,8 +53,14 @@
       addSelect('Geheugenbesparing',[['0','Uit'],['2','Na 2 minuten'],['5','Na 5 minuten'],['15','Na 15 minuten']],s.settings.sleepMinutes,v=>send('setting',{sleepMinutes:+v}));
       const row=document.createElement('div'),label=document.createElement('label'),box=document.createElement('input');row.className='settings-row';label.textContent='Bladwijzerbalk tonen';box.type='checkbox';box.checked=s.settings.bookmarkBar;box.onchange=()=>send('setting',{bookmarkBar:box.checked});row.append(label,box);list.append(row);
       list.append(utilityRow('Website-rechten','Klik op het icoon links in de adresbalk om microfoon, camera, downloads en klembord per website in te stellen.','lock'));
+      const update=s.update||{phase:'development',message:'Updates zijn beschikbaar in geïnstalleerde builds.'};
+      const updateActions=[];
+      if(update.phase==='ready')updateActions.push(['Herstart en installeer',()=>send('update-install')]);
+      else if(!['development','downloading','available','checking'].includes(update.phase))updateActions.push(['Controleren',()=>send('update-check')]);
+      updateActions.push(['Releases openen',()=>send('update-open-release')]);
+      list.append(utilityRow('Automatische updates',update.message,'reload',updateActions));
     }
-    if(kind==='help'){list.append(utilityRow('Navigeren','Ctrl/⌘ + L · adresbalk, Ctrl/⌘ + T · nieuw tabblad','globe'));list.append(utilityRow('Zoeken en afdrukken','Ctrl/⌘ + F · zoeken op pagina, Ctrl/⌘ + P · afdrukken','search'));list.append(utilityRow('Tabbladen','Ctrl/⌘ + W · sluiten, Ctrl/⌘ + Shift + T · herstellen','plus'));}
+    if(kind==='help'){list.append(utilityRow('Navigeren','Ctrl/⌘ + L · adresbalk, Ctrl/⌘ + T · nieuw tabblad','globe'));list.append(utilityRow('Zoeken en afdrukken','Ctrl/⌘ + F · zoeken op pagina, Ctrl/⌘ + P · afdrukken','search'));list.append(utilityRow('Tabbladen','Ctrl/⌘ + W · sluiten, Ctrl/⌘ + Shift + T · herstellen','plus'));list.append(utilityRow('Maker','Thijs · Noorder Browser '+s.version,'globe'));}
     if(kind==='groups'){for(const [id,group] of Object.entries(s.groups)){const count=s.tabs.filter(t=>t.group===id).length;list.append(utilityRow(group.name,count+' tabblad'+(count===1?'':'en'),'folder',[['Openen',()=>send('group-open',id)],['Verwijderen',()=>send('group-delete',id)]]));}list.append(utilityRow('Nieuwe groep','Rechtermuisklik op een tabblad en kies Nieuwe groep met dit tabblad.','plus'));}
     if(kind==='extensions'){list.append(utilityRow('Uitgepakte extensie toevoegen','Electron ondersteunt een deel van de Chrome-extensie-API; .crx-bestanden en de Chrome Web Store worden niet ondersteund.','puzzle',[['Map kiezen',()=>send('extension-add')]]));for(const ext of s.extensions)list.append(utilityRow(ext.name,ext.path,'puzzle',[['Verwijderen',()=>send('extension-remove',ext.id)]]));}
     if(!list.children.length){const p=document.createElement('p');p.className='utility-empty';p.textContent='Hier staat nog niets.';list.append(p);}

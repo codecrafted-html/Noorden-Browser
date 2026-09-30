@@ -1,15 +1,15 @@
 {
   "name": "noorder-browser",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Chrome-achtige browser met geheugenbesparing voor macOS en Windows",
   "main": "src/main.js",
-  "author": "Sven",
+  "author": "Thijs",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "dist:mac": "electron-builder --mac dmg zip",
     "dist:win": "electron-builder --win nsis portable",
-    "test": "node --test tests/policy.test.js",
+    "test": "node --test tests/policy.test.js tests/updates.test.js",
     "dist:win:zip": "electron-builder --win zip --x64"
   },
   "devDependencies": {
@@ -26,6 +26,11 @@
       "src/**/*",
       "package.json"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "codecrafted-html",
+      "repo": "Noorden-Browser"
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
@@ -65,5 +70,8 @@
         }
       ]
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

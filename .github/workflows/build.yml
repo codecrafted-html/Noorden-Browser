@@ -40,6 +40,27 @@ jobs:
           path: dist/*.dmg
           if-no-files-found: error
 
+  mac-update:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Bouw universele Mac-update
+        run: npx electron-builder --mac zip --universal --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Noorder-macOS-update
+          path: |
+            dist/*.zip
+            dist/latest-mac.yml
+            dist/*.blockmap
+          if-no-files-found: error
+
   windows:
     runs-on: windows-latest
     steps:
@@ -58,10 +79,12 @@ jobs:
           path: |
             dist/*.exe
             dist/*.zip
+            dist/latest.yml
+            dist/*.blockmap
           if-no-files-found: error
 
   release:
-    needs: [mac, windows]
+    needs: [mac, mac-update, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -91,13 +114,13 @@ jobs:
           shopt -s nullglob
           cp build/icon.png release-assets/Noorder-logo.png
           cp src/logo.svg release-assets/Noorder-logo.svg
-          assets=(release-assets/*.dmg release-assets/*.exe release-assets/*.zip release-assets/*.png release-assets/*.svg)
-          if [ "${#assets[@]}" -lt 4 ]; then
-            echo 'Verwachte Mac- en Windows-bestanden ontbreken' >&2
+          assets=(release-assets/*.dmg release-assets/*.exe release-assets/*.zip release-assets/*.yml release-assets/*.blockmap release-assets/*.png release-assets/*.svg)
+          if [ ! -f release-assets/latest.yml ] || [ ! -f release-assets/latest-mac.yml ] || [ "${#assets[@]}" -lt 7 ]; then
+            echo 'Installatie- of updatebestanden ontbreken' >&2
             exit 1
           fi
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Noorder Browser ${RELEASE_TAG#v}" --notes 'Mac: open de DMG en sleep Noorder Browser naar Programma’s. Versie 2.2 start donker en biedt Nederlands (België) aan websites aan. Windows: gebruik het installatiebestand of pak de ZIP uit. Niet door Apple genotariseerd; macOS kan bij het eerste openen om toestemming via Privacy en beveiliging vragen.'
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Noorder Browser ${RELEASE_TAG#v}" --notes 'Maker: Thijs. Updates worden in de app gecontroleerd en gedownload; onder Instellingen kun je opnieuw controleren of herstarten om te installeren. Windows: gebruik de NSIS-installatie voor automatische updates. Mac: installeer met de DMG. Mac-updates kunnen door macOS worden geweigerd zolang de app niet met Apple Developer ID is ondertekend; gebruik dan Releases openen. De Mac-app is niet genotariseerd.'
           fi
           gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name'

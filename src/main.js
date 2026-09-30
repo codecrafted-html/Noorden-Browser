@@ -6,6 +6,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { defaults, normalizeSettings, addressToUrl, isWebUrl, host, sleepReason } = require('./policy');
+const { createUpdateManager } = require('./updates');
 app.commandLine.appendSwitch('lang','nl-BE');
 const testMode = !app.isPackaged && process.env.NOORDER_TEST === '1';
 if (testMode && process.env.NOORDER_TEST_PROFILE) app.setPath('userData', process.env.NOORDER_TEST_PROFILE);
@@ -13,7 +14,7 @@ const childProfile=process.env.NOORDER_CHILD_PROFILE;
 const privateWindow=process.env.NOORDER_PRIVATE==='1';
 if(childProfile && path.isAbsolute(childProfile))app.setPath('userData',childProfile);
 const UI = pathToFileURL(path.join(__dirname, 'index.html')).href;
-let win, tabs = [], activeId = null, nextId = 1, bookmarks = [], history = [], downloads = [], permissions = {}, activeDownloads = new Map(), nextDownloadId = 1, settings = { ...defaults }, closed = [], timer, metrics = null, overlayOpen = false, groups = {}, extensions = [];
+let win, tabs = [], activeId = null, nextId = 1, bookmarks = [], history = [], downloads = [], permissions = {}, activeDownloads = new Map(), nextDownloadId = 1, settings = { ...defaults }, closed = [], timer, metrics = null, overlayOpen = false, groups = {}, extensions = [], updateManager, installingUpdate = false;
 const current = () => tabs.find(t => t.id === activeId);
 const alive = t => !!t?.view?.webContents && !t.view.webContents.isDestroyed();
 const file = name => path.join(app.getPath('userData'), name + '.json');
@@ -43,7 +44,7 @@ function snapshot() {
     kind:t?.kind || 'home', url:t?.url || '', loading:!!t?.loading, error:t?.error || '',
     canBack:!!wc?.navigationHistory.canGoBack(), canForward:!!wc?.navigationHistory.canGoForward(),
     bookmarked:bookmarks.some(b=>b.url===t?.url), bookmarks, history:history.slice(0,200), downloads:downloads.slice(0,100),
-    sitePermissions:permissions[origin(t?.url)]||{},groups, extensions:extensions.map(e=>({name:e.name,id:e.id,path:e.path})),privateWindow,settings, dark:nativeTheme.shouldUseDarkColors, metrics,
+    sitePermissions:permissions[origin(t?.url)]||{},groups, extensions:extensions.map(e=>({name:e.name,id:e.id,path:e.path})),privateWindow,settings, update:updateManager?.state||{phase:'development',version:'',percent:0,message:'Updates zijn beschikbaar in geïnstalleerde builds.'}, dark:nativeTheme.shouldUseDarkColors, metrics,
     live:tabs.filter(alive).length, sleeping:tabs.filter(t=>t.suspended).length, maximized:!!win?.isMaximized(), zoom:wc?Math.round(wc.getZoomFactor()*100):100 };
 }
 function broadcast() { if (win && !win.isDestroyed()) win.webContents.send('browser:state', snapshot()); }
@@ -266,6 +267,13 @@ async function savePdf(wc,tab){
   if(canceled||!filePath||wc.isDestroyed())return;
   try {await fs.promises.writeFile(filePath,await wc.printToPDF({printBackground:true}));}catch(error){dialog.showErrorBox('PDF opslaan mislukt',error.message);}
 }
+async function confirmUpdateInstall(){
+  if(tabs.some(t=>t.dirty)){
+    const {response}=await dialog.showMessageBox(win,{type:'question',message:'Update installeren en herstarten?',detail:'Er zijn pagina’s met mogelijk onopgeslagen invoer. Bewaar die eerst of kies toch Herstarten.',buttons:['Annuleren','Herstarten'],defaultId:0,cancelId:0});
+    if(response!==1)return;
+  }
+  installingUpdate=true;updateManager.install();
+}
 function command(name,value){const t=current(),wc=alive(t)?t.view.webContents:null;switch(name){
   case 'get-state':broadcast();break;
   case 'new':newTab();break;
@@ -281,6 +289,9 @@ function command(name,value){const t=current(),wc=alive(t)?t.view.webContents:nu
   case 'bookmark':if(!isWebUrl(t?.url))break;bookmarks=bookmarks.some(b=>b.url===t.url)?bookmarks.filter(b=>b.url!==t.url):[...bookmarks,{title:t.title,url:t.url,favicon:t.favicon}].slice(-200);save();broadcast();break;
   case 'performance':performancePage();break;
   case 'history':case 'downloads':case 'bookmarks':case 'settings':case 'help':case 'extensions':openPage(name);break;
+  case 'update-check':openPage('settings');void updateManager?.check();break;
+  case 'update-open-release':void updateManager?.openRelease();break;
+  case 'update-install':if(updateManager?.state.phase==='ready')void confirmUpdateInstall();break;
   case 'groups':openPage('groups');break;
   case 'group-create':{const target=tabs.find(tab=>tab.id===value);if(target){const id='group-'+Date.now();groups[id]={name:'Groep '+(Object.keys(groups).length+1),color:'#5487bb'};target.group=id;save();broadcast();}break;}
   case 'group-remove':{const target=tabs.find(tab=>tab.id===value);if(target){target.group='';broadcast();}break;}
@@ -358,7 +369,7 @@ function createWindow(){win=new BrowserWindow({width:1280,height:850,minWidth:68
   webPreferences:{preload:path.join(__dirname,'preload.js'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
   win.webContents.on('will-navigate',e=>e.preventDefault());win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('before-input-event',shortcut);
   win.on('resize',()=>{bounds();broadcast();});
-  win.on('close',e=>{if(!testMode && tabs.some(t=>t.dirty)){const answer=dialog.showMessageBoxSync(win,{type:'question',message:'Er staan tabbladen met invoer open.',detail:'Afsluiten kan onopgeslagen wijzigingen verwijderen.',buttons:['Annuleren','Afsluiten'],defaultId:0,cancelId:0});if(answer!==1)e.preventDefault();}});
+  win.on('close',e=>{if(!testMode && !installingUpdate && tabs.some(t=>t.dirty)){const answer=dialog.showMessageBoxSync(win,{type:'question',message:'Er staan tabbladen met invoer open.',detail:'Afsluiten kan onopgeslagen wijzigingen verwijderen.',buttons:['Annuleren','Afsluiten'],defaultId:0,cancelId:0});if(answer!==1)e.preventDefault();}});
   win.on('closed',()=>{const old=tabs;tabs=[];activeId=null;win=null;old.forEach(t=>{t.pendingSleep=false;if(alive(t))t.view.webContents.close();});});
   win.loadFile(path.join(__dirname,'index.html')).then(()=>{newTab();broadcast();});
 }
@@ -381,9 +392,10 @@ app.whenReady().then(()=>{
   session.defaultSession.on('will-download',(_e,item,wc)=>registerDownload(item,wc));
   ipcMain.on('browser:command',(event,name,value)=>{if(event.sender!==win?.webContents||event.senderFrame!==win.webContents.mainFrame||event.senderFrame.url!==UI||typeof name!=='string')return;command(name,value);});
   ipcMain.on('page:status',(event,type,value)=>{const t=tabs.find(t=>alive(t)&&t.view.webContents===event.sender);if(!t||event.senderFrame!==event.sender.mainFrame||value!==true&&value!==false)return;if(type==='dirty')t.dirty=t.dirty||value;if(type==='media'){t.media=value;if(!value)t.recentAudio=Date.now();}broadcast();});
-  nativeTheme.on('updated',broadcast);createWindow();timer=setInterval(sweep,10000);timer.unref();
+  updateManager=createUpdateManager({app,platform:process.platform,privateWindow,notify:broadcast,openRelease:url=>shell.openExternal(url)});
+  nativeTheme.on('updated',broadcast);createWindow();updateManager.start();timer=setInterval(sweep,10000);timer.unref();
 });
 app.on('activate',()=>{if(!win)createWindow();});
 app.on('window-all-closed',()=>{if(process.platform!=='darwin')app.quit();});
-app.on('will-quit',()=>{clearInterval(timer);if(privateWindow && childProfile)try{fs.rmSync(childProfile,{recursive:true,force:true});}catch{}});
+app.on('will-quit',()=>{clearInterval(timer);updateManager?.dispose();if(privateWindow && childProfile)try{fs.rmSync(childProfile,{recursive:true,force:true});}catch{}});
 if(testMode)globalThis.__noorderTest=module.exports={snapshot,newTab,activate,command,sweep,measure,suspend,permissionAllowed,loadExtension,newWindow,get tabs(){return tabs;},get win(){return win;}};

@@ -51,7 +51,13 @@ Bouwen op Windows:
 npm run dist:win
 ```
 
-De repository bevat de actuele broncode. **Actions → Bouw en publiceer Noorder Browser → Run workflow** bouwt op macOS en Windows en zet beide DMG’s, het Windows-installatiebestand en de Windows-ZIP automatisch bij [Releases](https://github.com/codecrafted-html/Noorden-Browser/releases). Een tag zoals `v2.2.0` start dezelfde releaseworkflow. GitHub voegt automatisch een broncodearchief toe.
+De repository bevat de actuele broncode. **Actions → Bouw en publiceer Noorder Browser → Run workflow** bouwt op macOS en Windows en zet beide DMG’s, het Windows-installatiebestand, de ZIP’s en de updatebestanden automatisch bij [Releases](https://github.com/codecrafted-html/Noorden-Browser/releases). Een tag zoals `v2.3.0` start dezelfde releaseworkflow. GitHub voegt automatisch een broncodearchief toe.
+
+## Updates
+
+Noorder controleert in een geïnstalleerde app kort na het starten en vervolgens iedere zes uur op een nieuwe GitHub-release. Nieuwe versies worden gedownload en bovenaan gemeld. Open **Instellingen → Automatische updates** om direct te controleren of om een gedownloade update met **Herstart en installeer** toe te passen. De Windows-installatie gebruikt NSIS. Gebruik voor automatische updates de installer, niet de losse Windows-ZIP.
+
+Op Mac staat een universele ZIP naast de DMG voor het updateprotocol. De huidige Mac-app heeft nog geen Apple Developer ID-handtekening en notarisatie; macOS kan een automatische installatie weigeren. Gebruik in dat geval **Releases openen** om de nieuwe DMG zelf te installeren. Een Developer ID-handtekening en notarisatie zijn nodig om dit betrouwbaar automatisch te laten verlopen.
 
 ## Sneltoetsen
 
@@ -75,6 +81,6 @@ Rechtermuisklik op een tabblad: vastzetten, website altijd actief houden, nu sla
 
 De testrun controleerde navigatie/terug/vooruit, bladwijzers, lichte/donkere UI, slapen/herstellen, echte toetsenbordinvoer, vastzetten, uitzonderingen en automatisch slapen. Vijf geladen web-views gingen naar nul en konden opnieuw worden geladen. OS-geheugencijfers waren in de geïsoleerde testcontainer niet betrouwbaar beschikbaar; de app toont dan geen verzonnen nulmeting. Zie `tests/test-results.json`. macOS- en Windows-bundels zijn op pakketinhoud gecontroleerd, maar nog niet op native machines gestart.
 
-Websites krijgen geen Node.js of browser-IPC-toegang. Locatie en onbekende sitepermissies blijven standaard uitgeschakeld. Extensies worden alleen vanuit een uitgepakte lokale map geladen en Electron ondersteunt slechts een deel van de Chrome-extensie-API. De wachtwoordenoptie opent de beheerder van het besturingssysteem; er is geen ingebouwde autofill. Synchronisatie, DRM-ondersteuning, beveiligingsreputatieservice en automatische app-updates ontbreken. Google Lens opent de Lens-website; Cast naar een televisie is niet ingebouwd. Webcompatibiliteit is daardoor niet gelijk aan die van Google Chrome. Werk Electron regelmatig bij en test opnieuw voordat je dit breed distribueert.
+Websites krijgen geen Node.js of browser-IPC-toegang. Locatie en onbekende sitepermissies blijven standaard uitgeschakeld. Extensies worden alleen vanuit een uitgepakte lokale map geladen en Electron ondersteunt slechts een deel van de Chrome-extensie-API. De wachtwoordenoptie opent de beheerder van het besturingssysteem; er is geen ingebouwde autofill. Synchronisatie, DRM-ondersteuning en een beveiligingsreputatieservice ontbreken. Mac-updates blijven afhankelijk van een Apple Developer ID-handtekening. Google Lens opent de Lens-website; Cast naar een televisie is niet ingebouwd. Webcompatibiliteit is daardoor niet gelijk aan die van Google Chrome. Werk Electron regelmatig bij en test opnieuw voordat je dit breed distribueert.
 
-Gebouwd met Electron 44.4.5. App-versie 2.2.0.
+Maker: Thijs. Gebouwd met Electron 44.4.5. App-versie 2.3.0.
