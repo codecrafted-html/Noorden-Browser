@@ -51,7 +51,7 @@ Bouwen op Windows:
 npm run dist:win
 ```
 
-De repository bevat de actuele broncode. **Actions → Bouw en publiceer Noorder Browser → Run workflow** bouwt op macOS en Windows en zet beide DMG’s, het Windows-installatiebestand, de ZIP’s en de updatebestanden automatisch bij [Releases](https://github.com/codecrafted-html/Noorden-Browser/releases). Een tag zoals `v2.3.2` start dezelfde releaseworkflow. GitHub voegt automatisch een broncodearchief toe.
+De repository bevat de actuele broncode. **Actions → Bouw en publiceer Noorder Browser → Run workflow** bouwt op macOS en Windows en zet beide DMG’s, het Windows-installatiebestand, de ZIP’s en de updatebestanden automatisch bij [Releases](https://github.com/codecrafted-html/Noorden-Browser/releases). Een tag zoals `v2.3.3` start dezelfde releaseworkflow. GitHub voegt automatisch een broncodearchief toe.
 
 ## Updates
 
@@ -83,4 +83,4 @@ De testrun controleerde navigatie/terug/vooruit, bladwijzers, lichte/donkere UI,
 
 Websites krijgen geen Node.js of browser-IPC-toegang. Locatie en onbekende sitepermissies blijven standaard uitgeschakeld. Extensies worden alleen vanuit een uitgepakte lokale map geladen en Electron ondersteunt slechts een deel van de Chrome-extensie-API. De wachtwoordenoptie opent de beheerder van het besturingssysteem; er is geen ingebouwde autofill. Synchronisatie, DRM-ondersteuning en een beveiligingsreputatieservice ontbreken. Mac-updates blijven afhankelijk van een Apple Developer ID-handtekening. Google Lens opent de Lens-website; Cast naar een televisie is niet ingebouwd. Webcompatibiliteit is daardoor niet gelijk aan die van Google Chrome. Werk Electron regelmatig bij en test opnieuw voordat je dit breed distribueert.
 
-Maker: Thijs. Gebouwd met Electron 44.4.5. App-versie 2.3.2.
+Maker: Thijs. Gebouwd met Electron 44.4.5. App-versie 2.3.3.
