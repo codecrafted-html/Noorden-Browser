@@ -1,6 +1,6 @@
 {
   "name": "noorder-browser",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Chrome-achtige browser met geheugenbesparing voor macOS en Windows",
   "main": "src/main.js",
   "author": "Thijs",

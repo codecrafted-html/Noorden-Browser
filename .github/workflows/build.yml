@@ -7,8 +7,6 @@ on:
       - main
     tags:
       - 'v*'
-    paths:
-      - '.github/workflows/build.yml'
 
 permissions:
   contents: write
