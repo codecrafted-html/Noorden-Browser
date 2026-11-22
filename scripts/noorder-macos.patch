@@ -679,3 +679,16 @@ index de6b9b6..0b6e51e 100755
    || { rm -rf "$CHECK"; echo "$FROM/appcast.json.zip doesn't verify — not publishing" >&2; exit 1; }
  cmp -s "$CHECK/appcast.json" "$FROM/appcast.json" || { rm -rf "$CHECK"; echo "the signed appcast isn't $FROM/appcast.json — not publishing" >&2; exit 1; }
  rm -rf "$CHECK"
+diff --git a/Sources/Search/Fold.swift b/Sources/Search/Fold.swift
+index 547c787..a1fe327 100644
+--- a/Sources/Search/Fold.swift
++++ b/Sources/Search/Fold.swift
+@@ -204,7 +204,7 @@ extension Browser {
+     /// other half in Split View.
+     private var shownPages: [WKWebView] {
+         guard let active else { return [] }
+-        let tabs = activeSplit.map { pair in pair.tabs.compactMap { id in tabs.first { $0.id == id } } } ?? [active]
++        let tabs = activeSplit.map { pair in pair.tabs.compactMap { id in self.tabs.first { $0.id == id } } } ?? [active]
+         return tabs.compactMap { $0.isWeb && !$0.asleep && !$0.floating ? $0.built : nil }
+     }
+ 
