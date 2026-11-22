@@ -1,0 +1,681 @@
+diff --git a/Search.icloud.entitlements b/Search.icloud.entitlements
+index 992a0d0..0e3aadf 100644
+--- a/Search.icloud.entitlements
++++ b/Search.icloud.entitlements
+@@ -9,13 +9,13 @@
+   <key>com.apple.security.device.audio-input</key><true/>
+   <key>com.apple.security.personal-information.location</key><true/>
+   <key>com.apple.security.personal-information.addressbook</key><true/>
+-  <key>com.apple.application-identifier</key><string>7BYKA895MC.com.officecommun.search</string>
++  <key>com.apple.application-identifier</key><string>7BYKA895MC.be.noorder.browser.webkit</string>
+   <key>com.apple.developer.team-identifier</key><string>7BYKA895MC</string>
+   <key>com.apple.developer.web-browser.public-key-credential</key><true/>
+   <!-- Sync with iCloud (ICloudSync.swift, SYNC.md in Search-iOS): the
+        person's private CloudKit database in this container. -->
+   <key>com.apple.developer.icloud-container-identifiers</key>
+-  <array><string>iCloud.com.officecommun.search</string></array>
++  <array><string>iCloud.be.noorder.browser.webkit</string></array>
+   <key>com.apple.developer.icloud-services</key>
+   <array><string>CloudKit</string></array>
+   <!-- A Developer ID app reads and writes iCloud's production data, the
+diff --git a/Search.passkeys.entitlements b/Search.passkeys.entitlements
+index a8ad9ab..59402f5 100644
+--- a/Search.passkeys.entitlements
++++ b/Search.passkeys.entitlements
+@@ -17,7 +17,7 @@
+        embedded in the app, which build.sh does when Search.provisionprofile
+        is next to it. The two identifiers are how macOS ties the app to that
+        profile: without them the restricted entitlement is refused. -->
+-  <key>com.apple.application-identifier</key><string>7BYKA895MC.com.officecommun.search</string>
++  <key>com.apple.application-identifier</key><string>7BYKA895MC.be.noorder.browser.webkit</string>
+   <key>com.apple.developer.team-identifier</key><string>7BYKA895MC</string>
+   <key>com.apple.developer.web-browser.public-key-credential</key><true/>
+ </dict>
+diff --git a/Sources/Search/AI.swift b/Sources/Search/AI.swift
+index 75ea674..e454773 100644
+--- a/Sources/Search/AI.swift
++++ b/Sources/Search/AI.swift
+@@ -110,7 +110,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
+ enum AIKeys {
+     enum Saved { case kept, unavailable, failed }
+ 
+-    private static let service = "com.officecommun.search.ai"
++    private static let service = "be.noorder.browser.webkit.ai"
+     /// A test run's, by account, gone when it quits.
+     private static var rehearsal: [String: String] = [:]
+ 
+diff --git a/Sources/Search/AIClient.swift b/Sources/Search/AIClient.swift
+index d1e3138..0698de2 100644
+--- a/Sources/Search/AIClient.swift
++++ b/Sources/Search/AIClient.swift
+@@ -44,7 +44,7 @@ enum AIError: LocalizedError, Equatable {
+ final class AIClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+     static let shared = AIClient()
+ 
+-    private static let log = Logger(subsystem: "com.officecommun.search", category: "AI")
++    private static let log = Logger(subsystem: "be.noorder.browser.webkit", category: "AI")
+ 
+     /// Kept between asks, and made again when the proxy changes: a session
+     /// holds the configuration it was born with, so a lazy one would go on
+diff --git a/Sources/Search/AIEngine.swift b/Sources/Search/AIEngine.swift
+index bc7ab92..9a04875 100644
+--- a/Sources/Search/AIEngine.swift
++++ b/Sources/Search/AIEngine.swift
+@@ -53,7 +53,7 @@ final class AIEngine: ObservableObject {
+     }
+     @Published var offered: Offer?
+ 
+-    nonisolated static let identifier = "com.officecommun.search.ai-engine"
++    nonisolated static let identifier = "be.noorder.browser.webkit.ai-engine"
+ 
+     enum State: Equatable {
+         case absent
+diff --git a/Sources/Search/AgentControl.swift b/Sources/Search/AgentControl.swift
+index 73d34a3..1e8223c 100644
+--- a/Sources/Search/AgentControl.swift
++++ b/Sources/Search/AgentControl.swift
+@@ -453,7 +453,7 @@ final class AgentSession: ObservableObject, Identifiable {
+ @MainActor
+ final class AgentControl: ObservableObject {
+     static let shared = AgentControl()
+-    static let log = Logger(subsystem: "com.officecommun.search", category: "Agent")
++    static let log = Logger(subsystem: "be.noorder.browser.webkit", category: "Agent")
+ 
+     /// In a folder of its own beside the session file, 0700 and this
+     /// user's: a test world's is its own.
+diff --git a/Sources/Search/AgentTrust.swift b/Sources/Search/AgentTrust.swift
+index 0b0e669..7dad4a5 100644
+--- a/Sources/Search/AgentTrust.swift
++++ b/Sources/Search/AgentTrust.swift
+@@ -107,7 +107,7 @@ struct AgentLauncher: Equatable {
+ // MARK: - the signature
+ 
+ enum AgentIdentity {
+-    static let log = Logger(subsystem: "com.officecommun.search", category: "Agent")
++    static let log = Logger(subsystem: "be.noorder.browser.webkit", category: "Agent")
+ 
+     /// The audit token of the process at the other end of a Unix socket: the
+     /// process that connected, as the kernel knows it (pid and its version).
+@@ -269,7 +269,7 @@ struct KeychainVault: AgentVault {
+     let account: String
+ 
+     /// Search's own access group, named outright: the application identifier
+-    /// this copy is signed with (TEAM.com.officecommun.search), from its own
++    /// this copy is signed with (TEAM.be.noorder.browser.webkit), from its own
+     /// entitlements. A copy without one has no group, and nowhere to keep this.
+     static let group: String? = {
+         guard let task = SecTaskCreateFromSelf(nil),
+@@ -278,7 +278,7 @@ struct KeychainVault: AgentVault {
+         return value as? String
+     }()
+ 
+-    static let agents = KeychainVault(service: "com.officecommun.search.agents.trusted",
++    static let agents = KeychainVault(service: "be.noorder.browser.webkit.agents.trusted",
+                                       account: Store.world.map { "trusted (\($0))" } ?? "trusted")
+ 
+     private var query: [String: Any] {
+diff --git a/Sources/Search/App.swift b/Sources/Search/App.swift
+index d6b60a9..9d731b9 100644
+--- a/Sources/Search/App.swift
++++ b/Sources/Search/App.swift
+@@ -41,7 +41,7 @@ struct SearchApp: App {
+         // shares, and a probe resized for a test once changed the size the
+         // real window came back at. The other windows' frames are in
+         // windows.json (see Windows.swift).
+-        Window("Search", id: Browsers.sceneID) {
++        Window("Noorder Browser", id: Browsers.sceneID) {
+             SceneRoot(slot: SceneSlot.shared)
+                 .frame(minWidth: 640, minHeight: 420)
+         }
+diff --git a/Sources/Search/ApplePasswords.swift b/Sources/Search/ApplePasswords.swift
+index ca89522..6139960 100644
+--- a/Sources/Search/ApplePasswords.swift
++++ b/Sources/Search/ApplePasswords.swift
+@@ -28,7 +28,7 @@ import Security
+ //   helper is kept running for as long as the pairing lasts: told every few
+ //   minutes, and on wake, that a tab came to the front, as Apple's extension
+ //   tells it on every tab switch. Not while unpaired. Why a helper ended is
+-//   logged (#1122): `log show --predicate 'subsystem == "com.officecommun.search"
++//   logged (#1122): `log show --predicate 'subsystem == "be.noorder.browser.webkit"
+ //   AND category == "ApplePasswords"' --info --last 1d`.
+ // - Only names are asked for, when the caret is in a sign-in box on an https
+ //   page of an ordinary tab. A password is asked for once you pick its
+@@ -124,7 +124,7 @@ final class ApplePasswords: ObservableObject {
+     static let shared = ApplePasswords(prefs: Shared.prefs)
+     /// Why the helper ended or a pairing was dropped (#1122): states,
+     /// durations, command numbers. Never a key, a code, a name or a site.
+-    nonisolated static let log = Logger(subsystem: "com.officecommun.search", category: "ApplePasswords")
++    nonisolated static let log = Logger(subsystem: "be.noorder.browser.webkit", category: "ApplePasswords")
+     /// How often a paired helper is told a tab came to the front.
+     nonisolated static let keepAliveEvery: TimeInterval = 240
+ 
+diff --git a/Sources/Search/Bench.swift b/Sources/Search/Bench.swift
+index 0382dd4..1eb6da5 100644
+--- a/Sources/Search/Bench.swift
++++ b/Sources/Search/Bench.swift
+@@ -127,7 +127,7 @@ final class Bench {
+     /// nothing of yours, and scripts set them up with a defaults write.
+     @MainActor
+     enum Consent {
+-        private static let mark = SwitchMark(service: "com.officecommun.search.bench")
++        private static let mark = SwitchMark(service: "be.noorder.browser.webkit.bench")
+         static var given: Bool { mark.given }
+         static func grant() { mark.grant() }
+         static func revoke() { mark.revoke() }
+@@ -2444,7 +2444,7 @@ final class Bench {
+             // takes what the other wrote (ONLY: records whose names start
+             // so), "stop". Test runs only.
+             guard Store.testing else { answer(["error": "icloudpair only works on a --test run"]); return }
+-            let suite = "com.officecommun.search.icloudpair.\(getpid())"
++            let suite = "be.noorder.browser.webkit.icloudpair.\(getpid())"
+             func state(_ extra: [String: Any] = [:]) -> [String: Any] {
+                 var out: [String: Any] = ["joined": Bench.pair?.sync.joined ?? false,
+                                           "records": (Bench.pair?.sync.ledger.values.keys.sorted() ?? [])]
+diff --git a/Sources/Search/Dialogs.swift b/Sources/Search/Dialogs.swift
+index c6cf5e6..dbf0e9d 100644
+--- a/Sources/Search/Dialogs.swift
++++ b/Sources/Search/Dialogs.swift
+@@ -389,7 +389,7 @@ extension Browser {
+     /// Said in the system log, so a page that kept reloading or went white
+     /// can be traced afterwards to why: the reason, and what was done about
+     /// it. The site stays private there; the reason doesn't.
+-    private static let pageLog = Logger(subsystem: "com.officecommun.search", category: "Pages")
++    private static let pageLog = Logger(subsystem: "be.noorder.browser.webkit", category: "Pages")
+ 
+     private func pageProcessEnded(_ webView: WKWebView, _ end: PageEnd) {
+         cancelDisplay(for: webView)
+diff --git a/Sources/Search/ExtensionNative.swift b/Sources/Search/ExtensionNative.swift
+index f5bcce6..1e78389 100644
+--- a/Sources/Search/ExtensionNative.swift
++++ b/Sources/Search/ExtensionNative.swift
+@@ -19,9 +19,9 @@ import WebKit
+ enum ExtensionNative {
+     /// Why an app's connection ended (#1122: iCloud Passwords' helper went
+     /// after a couple of minutes): the host's name and how, never a message.
+-    /// `log show --predicate 'subsystem == "com.officecommun.search" AND
++    /// `log show --predicate 'subsystem == "be.noorder.browser.webkit" AND
+     /// category == "ExtensionNative"' --info --last 1h`
+-    static let log = Logger(subsystem: "com.officecommun.search", category: "ExtensionNative")
++    static let log = Logger(subsystem: "be.noorder.browser.webkit", category: "ExtensionNative")
+ 
+     struct Refused: LocalizedError {
+         let why: String
+diff --git a/Sources/Search/FullScreenEscape.swift b/Sources/Search/FullScreenEscape.swift
+index c4054fc..d4ce8c5 100644
+--- a/Sources/Search/FullScreenEscape.swift
++++ b/Sources/Search/FullScreenEscape.swift
+@@ -43,7 +43,7 @@ import WebKit
+ @MainActor
+ final class FullScreenEscape {
+     static let shared = FullScreenEscape()
+-    private static let log = Logger(subsystem: "com.officecommun.search", category: "Escape")
++    private static let log = Logger(subsystem: "be.noorder.browser.webkit", category: "Escape")
+ 
+     /// How long after the first press a second one still leaves.
+     static let within: TimeInterval = 2
+diff --git a/Sources/Search/ICloudSync.swift b/Sources/Search/ICloudSync.swift
+index 0788606..f8ebb2e 100644
+--- a/Sources/Search/ICloudSync.swift
++++ b/Sources/Search/ICloudSync.swift
+@@ -10,7 +10,7 @@ import Combine
+ // are SYNC.md, here and in the Search-iOS repository, followed to the
+ // letter: change it there and here, or not at all.
+ //
+-//   - CloudKit container iCloud.com.officecommun.search, the private
++//   - CloudKit container iCloud.be.noorder.browser.webkit, the private
+ //     database, one zone "Search", one record type "Item". CKSyncEngine.
+ //   - A record's name says what it holds: device.<uuid> (one device's open
+ //     tabs), pins.<space>, pinfolders.<space> (the folders a space's pinned
+@@ -416,7 +416,7 @@ final class ICloudSync: ObservableObject {
+         makeEngine: { owner, state in CloudKitEngine(owner: owner, state: state) }
+     )
+ 
+-    nonisolated static let containerID = "iCloud.com.officecommun.search"
++    nonisolated static let containerID = "iCloud.be.noorder.browser.webkit"
+     nonisolated static let zoneName = "Search"
+     nonisolated static let recordType = "Item"
+     nonisolated static let onKey = "icloud.sync"
+diff --git a/Sources/Search/Links.swift b/Sources/Search/Links.swift
+index dc753cc..f878ba7 100644
+--- a/Sources/Search/Links.swift
++++ b/Sources/Search/Links.swift
+@@ -548,29 +548,7 @@ final class Links: NSObject, NSApplicationDelegate {
+     /// Mail, that already knows what build this is. The person still reads
+     /// it and presses send themselves — nothing here sends anything.
+     static func writeFeedback() {
+-        var text = URLComponents()
+-        text.scheme = "mailto"
+-        text.path = "hello@searchbrowser.app"
+-        text.queryItems = [
+-            URLQueryItem(name: "subject", value: "Search feedback — \(Updater.version) (\(Updater.build))"),
+-            URLQueryItem(name: "body", value: "\n\n—\nSearch \(Updater.version), build \(Updater.build), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"),
+-        ]
+-        guard let url = text.url else { return }
+-        // With a webmail chosen, its compose page, in a tab of the window in
+-        // front: no round trip through macOS, which may not send email
+-        // links here at all.
+-        let compose = MainActor.assumeIsolated { Mail.compose(for: url) }
+-        if let compose {
+-            MainActor.assumeIsolated {
+-                if Store.testing { Mail.seen.append("feedback: " + compose.absoluteString) }
+-                land(compose)
+-                comeForward()
+-            }
+-            return
+-        }
+-        // A test run opens no other app (Tests/webmail.py).
+-        if Store.testing { MainActor.assumeIsolated { Mail.seen.append("feedback: system") }; return }
+-        NSWorkspace.shared.open(url)
++        NSWorkspace.shared.open(URL(string: "https://github.com/codecrafted-html/Noorden-Browser/issues")!)
+     }
+ 
+     // MARK: - being the browser
+diff --git a/Sources/Search/Passkeys.swift b/Sources/Search/Passkeys.swift
+index 5d545f5..cd63c16 100644
+--- a/Sources/Search/Passkeys.swift
++++ b/Sources/Search/Passkeys.swift
+@@ -37,7 +37,7 @@ import WebKit
+ final class Passkeys: NSObject {
+     static let shared = Passkeys()
+ 
+-    private static let log = Logger(subsystem: "com.officecommun.search", category: "Passkeys")
++    private static let log = Logger(subsystem: "be.noorder.browser.webkit", category: "Passkeys")
+ 
+     // MARK: - the Mac's permission
+ 
+diff --git a/Sources/Search/Prefs.swift b/Sources/Search/Prefs.swift
+index d2d6198..29435c2 100644
+--- a/Sources/Search/Prefs.swift
++++ b/Sources/Search/Prefs.swift
+@@ -180,7 +180,7 @@ final class Preferences: ObservableObject {
+             if agents != oldValue { AgentTrust.shared.forgetAll() }
+         }
+     }
+-    static let agentsMark = SwitchMark(service: "com.officecommun.search.agents")
++    static let agentsMark = SwitchMark(service: "be.noorder.browser.webkit.agents")
+     /// Found on at launch without the mark, and put back to off.
+     private(set) var agentsRefused = false
+     /// Light, dark, or the Mac's own.
+@@ -1152,7 +1152,7 @@ final class Preferences: ObservableObject {
+             agentsRefused = true
+             store.set(false, forKey: "agents")
+         }
+-        let chosen = store.string(forKey: "look").flatMap(Look.init) ?? .system
++        let chosen = store.string(forKey: "look").flatMap(Look.init) ?? .dark
+         look = chosen
+         homeTheme = store.string(forKey: "home.theme").flatMap(HomeTheme.stored) ?? .off
+         homeThemeImage = store.string(forKey: "home.theme.image")
+@@ -1437,7 +1437,7 @@ final class Preferences: ObservableObject {
+     /// bool as launch reads them: any line, or none, is off, and that is
+     /// written back.
+     func reread() {
+-        take(\.look, "look", store.string(forKey: "look").flatMap(Look.init), or: .system)
++        take(\.look, "look", store.string(forKey: "look").flatMap(Look.init), or: .dark)
+         take(\.homeTheme, "home.theme", store.string(forKey: "home.theme").flatMap(HomeTheme.stored), or: .off)
+         take(\.homeThemeImage, store.string(forKey: "home.theme.image"))
+         take(\.homeShuffle, store.bool(forKey: "home.shuffle"))
+diff --git a/Sources/Search/Proxy.swift b/Sources/Search/Proxy.swift
+index 7cb0d9a..db950f2 100644
+--- a/Sources/Search/Proxy.swift
++++ b/Sources/Search/Proxy.swift
+@@ -98,7 +98,7 @@ struct ProxySettingsValue: Codable, Equatable {
+ /// value, a log line or an error. A test run keeps it in memory and leaves
+ /// the real keychain alone.
+ enum ProxySecret {
+-    private static let service = "com.officecommun.search.proxy"
++    private static let service = "be.noorder.browser.webkit.proxy"
+     private static let account = "global"
+     /// A test run's, gone when it quits, as AIKeys keeps its own.
+     nonisolated(unsafe) private static var rehearsal: String?
+diff --git a/Sources/Search/Settings.swift b/Sources/Search/Settings.swift
+index 12ba5f6..e4e1b44 100644
+--- a/Sources/Search/Settings.swift
++++ b/Sources/Search/Settings.swift
+@@ -1122,10 +1122,10 @@ struct SettingsPanel: View {
+                 .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
+                 .frame(height: 34)
+             VStack(alignment: .leading, spacing: 3) {
+-                Text("Search")
++                Text("Noorder Browser")
+                     .font(.system(size: 15, weight: .semibold))
+                     .foregroundStyle(Palette.ink)
+-                Text("by Office Commun · version \(Updater.version)")
++                Text("Based on Search by Office Commun · version \(Updater.version)")
+                     .font(.system(size: 12))
+                     .foregroundStyle(Palette.muted)
+             }
+@@ -1146,6 +1146,7 @@ struct SettingsPanel: View {
+     private var versionDetail: String {
+         switch updater.stage {
+         case .none:
++            if updater.checkFailed { return "Could not check for updates. Try again." }
+             return updater.lastChecked.map { "Checked \($0.formatted(.relative(presentation: .named))), every hour on its own" }
+                 ?? "Checked every hour on its own"
+         case .fetching(let next):
+@@ -1165,7 +1166,7 @@ struct SettingsPanel: View {
+         case .none:
+             Pill(updater.checking ? "Checking…" : "Check now") {
+                 updater.check { found in
+-                    if found == nil { browser.announce("This is the latest one") }
++                    if found == nil { browser.announce(updater.checkFailed ? "Could not reach the update feed" : "This is the latest one") }
+                 }
+             }
+             .disabled(updater.checking)
+diff --git a/Sources/Search/Store.swift b/Sources/Search/Store.swift
+index e586c78..98379da 100644
+--- a/Sources/Search/Store.swift
++++ b/Sources/Search/Store.swift
+@@ -98,7 +98,7 @@ enum Store {
+     /// differ from stores made by identifier in how long extension workers
+     /// are let live.
+     static var ownContainer: Bool {
+-        (Bundle.main.bundleIdentifier ?? "") != "com.officecommun.search"
++        (Bundle.main.bundleIdentifier ?? "") != "be.noorder.browser.webkit"
+     }
+ 
+     /// The fixed identifiers of a test world's WebKit stores: 1 for websites,
+@@ -123,14 +123,7 @@ enum Store {
+     static let folder: URL = {
+         let support = FileManager.default
+             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+-        let home = support.appendingPathComponent(world.map { "Search (\($0))" } ?? "Search", isDirectory: true)
+-        if !testing {
+-            let old = support.appendingPathComponent("Office Browser", isDirectory: true)
+-            let files = FileManager.default
+-            if !files.fileExists(atPath: home.path), files.fileExists(atPath: old.path) {
+-                try? files.moveItem(at: old, to: home)
+-            }
+-        }
++        let home = support.appendingPathComponent(world.map { "Noorder WebKit (\($0))" } ?? "Noorder WebKit", isDirectory: true)
+         return home
+     }()
+ 
+@@ -156,10 +149,9 @@ enum Store {
+     /// where the tabs go must not change yours.
+     static let settings: UserDefaults = {
+         guard testing else {
+-            carryOver(into: .standard)
+             return .standard
+         }
+-        let suite = world == "test" ? "com.officecommun.search.test" : "com.officecommun.search.test.\(world ?? "")"
++        let suite = world == "test" ? "be.noorder.browser.webkit.test" : "be.noorder.browser.webkit.test.\(world ?? "")"
+         return UserDefaults(suiteName: suite) ?? .standard
+     }()
+ 
+diff --git a/Sources/Search/Trim.swift b/Sources/Search/Trim.swift
+index 3f602ac..7e65f57 100644
+--- a/Sources/Search/Trim.swift
++++ b/Sources/Search/Trim.swift
+@@ -24,7 +24,7 @@ enum Trim {
+     private static let margin: UInt64 = 64 << 20
+     /// Read and written on `queue` only.
+     nonisolated(unsafe) private static var after: UInt64 = 0
+-    private static let queue = DispatchQueue(label: "com.officecommun.search.trim", qos: .utility)
++    private static let queue = DispatchQueue(label: "be.noorder.browser.webkit.trim", qos: .utility)
+ 
+     /// Started once, at launch: the background is one moment to look.
+     static func start() {
+diff --git a/Sources/Search/Updater.swift b/Sources/Search/Updater.swift
+index 968b18e..ce70da2 100644
+--- a/Sources/Search/Updater.swift
++++ b/Sources/Search/Updater.swift
+@@ -15,7 +15,7 @@ import Security
+ //
+ // What the updater leaves alone, on purpose: everything in
+ // ~/Library/Application Support/Search, the defaults under
+-// com.officecommun.search, and the keychain. The session, the pins, the
++// be.noorder.browser.webkit, and the keychain. The session, the pins, the
+ // history, the passwords — none of it is read, moved or rewritten here. Only
+ // the bundle changes hands, and it keeps its bundle id and its signing
+ // identity, so the keychain items the old build made open for the new one.
+@@ -43,9 +43,9 @@ final class Updater: ObservableObject {
+         // SEARCH_ARCH=x86_64) and a feed beside it naming only Intel builds,
+         // so neither kind of Mac is ever offered the other's.
+         #if arch(x86_64)
+-        return URL(string: "https://officecommun.com/search/intel/appcast.json")!
++        return URL(string: "https://github.com/codecrafted-html/Noorden-Browser/releases/latest/download/intel-appcast.json")!
+         #else
+-        return URL(string: "https://officecommun.com/search/appcast.json")!
++        return URL(string: "https://github.com/codecrafted-html/Noorden-Browser/releases/latest/download/arm64-appcast.json")!
+         #endif
+     }()
+ 
+@@ -145,6 +145,24 @@ final class Updater: ObservableObject {
+         check { _ in }
+     }
+ 
++    // Ad-hoc builds may discover a release, but must never silently install one.
++    static let releaseSite = URL(string: "https://github.com/codecrafted-html/Noorden-Browser/releases/latest")!
++    nonisolated static var manualChannel: Bool {
++        Bundle.main.object(forInfoDictionaryKey: "NoorderReleaseChannel") as? String == "github"
++    }
++    @Published private(set) var checkFailed = false
++    private static func githubRelease() async -> Release? {
++        let api = URL(string: "https://api.github.com/repos/codecrafted-html/Noorden-Browser/releases/latest")!
++        guard let bytes = await get(api, limit: 1 << 20),
++              let json = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
++              let tag = json["tag_name"] as? String, tag.hasPrefix("v") else { return nil }
++        let version = String(tag.dropFirst())
++        guard version.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else { return nil }
++        let newer = version.compare(Self.version, options: .numeric) == .orderedDescending
++        return Release(version: version, build: Self.build + (newer ? 1 : 0), archive: releaseSite,
++                       dmg: releaseSite, notes: "Download the Mac installer from Noorder Browser Releases.", minimumSystemVersion: nil)
++    }
++
+     private var clock: Timer?
+ 
+     /// Every hour, give or take the clock's tolerance: one small signed file.
+@@ -170,7 +188,7 @@ final class Updater: ObservableObject {
+         say?("Checking for updates…")
+         check { [weak self] found in
+             guard let self else { return }
+-            if found == nil { self.say?("Search is up to date"); return }
++            if found == nil { self.say?(self.checkFailed ? "Could not reach the update feed" : "Noorder Browser is up to date"); return }
+             // The waiting branch or `take` announces the next state afterward.
+         }
+     }
+@@ -182,8 +200,9 @@ final class Updater: ObservableObject {
+         guard !checking else { return }
+         checking = true
+         Task { [weak self] in
+-            let found = await Updater.fetch()
++            let found = Updater.manualChannel ? await Updater.githubRelease() : await Updater.fetch()
+             guard let self else { return }
++            checkFailed = found == nil
+             checking = false
+             lastChecked = Date()
+             Store.settings.set(Date(), forKey: lastKey)
+@@ -192,6 +211,12 @@ final class Updater: ObservableObject {
+                 done(nil)
+                 return
+             }
++            if Updater.manualChannel {
++                stage = .offered(found)
++                done(found)
++                say?("Noorder Browser \(found.version) is available in Releases")
++                return
++            }
+             done(found)
+             guard !installsOnItsOwn else { take(found); return }
+             switch stage {
+@@ -226,6 +251,7 @@ final class Updater: ObservableObject {
+ 
+     func openDisk() {
+         guard case .offered(let release) = stage, !fetchingDisk else { return }
++        if Updater.manualChannel { NSWorkspace.shared.open(Self.releaseSite); return }
+         fetchingDisk = true
+         say?("Downloading Search \(release.version)…")
+         Task.detached(priority: .utility) {
+@@ -365,8 +391,8 @@ final class Updater: ObservableObject {
+     }
+ 
+     /// The team that signs Search's releases, and with them its feed.
+-    nonisolated static let team = "7BYKA895MC"
+-    nonisolated static let feedIdentifier = "com.officecommun.search.appcast"
++    nonisolated static let team = Swap.teamID(of: Bundle.main.bundleURL) ?? ""
++    nonisolated static let feedIdentifier = "be.noorder.browser.webkit.appcast"
+ 
+     /// The feed inside `packed`, if it is Office Commun's: appcast.json with
+     /// a code signature (codesign keeps it in the file's extended attributes,
+@@ -563,7 +589,7 @@ private enum Swap {
+ 
+     /// The team that signed a bundle, as the system reads it — nil for an
+     /// ad-hoc signature, or none.
+-    private static func teamID(of bundle: URL) -> String? {
++    fileprivate static func teamID(of bundle: URL) -> String? {
+         var code: SecStaticCode?
+         guard SecStaticCodeCreateWithPath(bundle as CFURL, [], &code) == errSecSuccess, let code else {
+             return nil
+diff --git a/Sources/Search/Vault.swift b/Sources/Search/Vault.swift
+index c9dd708..09c1a76 100644
+--- a/Sources/Search/Vault.swift
++++ b/Sources/Search/Vault.swift
+@@ -45,7 +45,7 @@ struct Kept: Identifiable, Equatable, Hashable {
+ enum Vault {
+     /// What every item of ours is tagged with. A test run tags its own, so a
+     /// password saved while trying something never sits among the real ones.
+-    private static let label = Store.world.map { "Search (\($0))" } ?? "Search"
++    private static let label = Store.world.map { "Noorder WebKit (\($0))" } ?? "Noorder WebKit"
+ 
+     // MARK: - reading
+ 
+diff --git a/Sources/Search/Webmail.swift b/Sources/Search/Webmail.swift
+index 45ff112..a1cb1b6 100644
+--- a/Sources/Search/Webmail.swift
++++ b/Sources/Search/Webmail.swift
+@@ -203,10 +203,10 @@ enum Mail {
+     }
+ 
+     static func otherMailApp(for url: URL) -> URL? {
+-        let ours = Bundle.main.bundleIdentifier ?? "com.officecommun.search"
++        let ours = Bundle.main.bundleIdentifier ?? "be.noorder.browser.webkit"
+         func isOurs(_ app: URL) -> Bool {
+             app.standardizedFileURL == Bundle.main.bundleURL.standardizedFileURL
+-                || Bundle(url: app)?.bundleIdentifier.map { $0 == ours || $0.hasPrefix("com.officecommun.search") } == true
++                || Bundle(url: app)?.bundleIdentifier.map { $0 == ours || $0.hasPrefix("be.noorder.browser.webkit") } == true
+         }
+         if let first = NSWorkspace.shared.urlForApplication(toOpen: url), !isOurs(first) { return first }
+         let others = NSWorkspace.shared.urlsForApplications(toOpen: url).filter { !isOurs($0) }
+diff --git a/VERSION b/VERSION
+index 8fc77d0..4a36342 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-1.0.17
++3.0.0
+diff --git a/build.sh b/build.sh
+index e338ce7..44d4971 100755
+--- a/build.sh
++++ b/build.sh
+@@ -57,8 +57,8 @@ case "$ARCH" in
+   x86_64) OUT="build/intel"; SUBFOLDER="/intel" ;;
+   *) echo "SEARCH_ARCH is arm64 or x86_64, not “$ARCH”" >&2; exit 1 ;;
+ esac
+-APP="$OUT/Search.app"
+-NAME="Search"
++APP="$OUT/Noorder Browser.app"
++NAME="Noorder Browser"
+ # Asked for with SEARCH_DEV=1, a dev build, on a yellow plate and named for
+ # the feature it's built from: "Search-split-view" in the menu bar, the Dock
+ # and ⌘Tab, so it's never taken for the installed app beside it, or for the
+@@ -125,6 +125,7 @@ vtool -set-build-version macos "$MINIMUM" "$SDK" -replace \
+ mv "$APP/Contents/MacOS/$NAME.sdk" "$APP/Contents/MacOS/$NAME"
+ # The AppleScript dictionary (Scripting.swift): read-only, tabs' addresses
+ # and titles. The plist below points to it.
++cp LICENSE "$APP/Contents/Resources/Search-LICENSE.txt"
+ cp Search.sdef "$APP/Contents/Resources/"
+ 
+ # Symbols stay out of the app. The linker leaves every function's name and a
+@@ -181,9 +182,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
+ <plist version="1.0">
+ <dict>
+   <key>CFBundleName</key><string>$NAME</string>
++  <key>NoorderReleaseChannel</key><string>github</string>
+   <key>CFBundleDisplayName</key><string>$NAME</string>
+   <key>CFBundleExecutable</key><string>$NAME</string>
+-  <key>CFBundleIdentifier</key><string>com.officecommun.search</string>
++  <key>CFBundleIdentifier</key><string>be.noorder.browser.webkit</string>
+   <key>CFBundlePackageType</key><string>APPL</string>
+   <key>CFBundleShortVersionString</key><string>$VERSION</string>
+   <key>CFBundleVersion</key><string>$BUILD</string>
+@@ -191,7 +193,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
+   $ICONNAME
+   <key>LSMinimumSystemVersion</key><string>$MINIMUM</string>
+   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+-  <key>NSHumanReadableCopyright</key><string>© Office Commun · Search</string>
++  <key>NSHumanReadableCopyright</key><string>Noorder Browser: Thijs · Search: © 2026 Office Commun</string>
+   <key>NSHighResolutionCapable</key><true/>
+   <key>NSAppleScriptEnabled</key><true/>
+   <key>OSAScriptingDefinition</key><string>Search.sdef</string>
+@@ -322,7 +324,7 @@ if [ -f "Search.provisionprofile" ]; then
+   # Sync with iCloud (ICloudSync.swift) needs the iCloud entitlements, and
+   # those only open with a profile that carries the container: signed with
+   # them and a profile from before, the app would not start. So they go in
+-  # only when the profile names iCloud.com.officecommun.search; otherwise
++  # only when the profile names iCloud.be.noorder.browser.webkit; otherwise
+   # the build is as before and Settings says it needs a new one. Of the
+   # two keys a profile may or may not carry (the container's environment,
+   # the pushes), only what it does carry is kept.
+@@ -330,14 +332,14 @@ if [ -f "Search.provisionprofile" ]; then
+   security cms -D -i "Search.provisionprofile" > "$PROFILE_PLIST" 2>/dev/null || true
+   profile_has() { /usr/libexec/PlistBuddy -c "Print :Entitlements:$1" "$PROFILE_PLIST" >/dev/null 2>&1; }
+   if /usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.developer.icloud-container-identifiers" "$PROFILE_PLIST" 2>/dev/null \
+-      | grep -q "iCloud.com.officecommun.search"; then
++      | grep -q "iCloud.be.noorder.browser.webkit"; then
+     ENTITLEMENTS="build/Search.icloud.entitlements"
+     mkdir -p build
+     cp "Search.icloud.entitlements" "$ENTITLEMENTS"
+     for key in com.apple.developer.icloud-container-environment com.apple.developer.aps-environment; do
+       profile_has "$key" || /usr/libexec/PlistBuddy -c "Delete :$key" "$ENTITLEMENTS" >/dev/null
+     done
+-    echo "iCloud: the profile carries iCloud.com.officecommun.search, Sync with iCloud is in"
++    echo "iCloud: the profile carries iCloud.be.noorder.browser.webkit, Sync with iCloud is in"
+   else
+     echo "iCloud: the profile has no iCloud container, built without Sync with iCloud (Settings says it needs a new build)"
+   fi
+@@ -424,8 +426,8 @@ write_engine() {
+   [ "$ARCH" = "arm64" ] && [ -n "${SEARCH_AI_ENGINE_VERSION:-}" ] || return 0
+   [[ "$SEARCH_AI_ENGINE_VERSION" =~ ^[0-9]+$ ]] || { echo "SEARCH_AI_ENGINE_VERSION is a whole number" >&2; exit 1; }
+   [ -f "$ENGINE" ] || { echo "$ENGINE is missing — ./engine.sh arm64 makes it" >&2; exit 1; }
+-  codesign --verify --strict -R='anchor apple generic and identifier "com.officecommun.search.ai-engine" and certificate leaf[subject.OU] = "7BYKA895MC"' "$ENGINE" \
+-    || { echo "$ENGINE isn't signed with the Developer ID as com.officecommun.search.ai-engine" >&2; exit 1; }
++  codesign --verify --strict -R='anchor apple generic and identifier "be.noorder.browser.webkit.ai-engine" and certificate leaf[subject.OU] = "7BYKA895MC"' "$ENGINE" \
++    || { echo "$ENGINE isn't signed with the Developer ID as be.noorder.browser.webkit.ai-engine" >&2; exit 1; }
+   local FILE="search-ai-engine-arm64-$SEARCH_AI_ENGINE_VERSION"
+   mkdir -p "$OUT/ai"
+   cp "$ENGINE" "$OUT/ai/$FILE"
+@@ -459,7 +461,7 @@ JSON
+     local SIGNED
+     SIGNED="$(mktemp -d)"
+     cp "$OUT/appcast.json" "$SIGNED/appcast.json"
+-    codesign --force --timestamp --sign "$IDENTITY" --identifier com.officecommun.search.appcast "$SIGNED/appcast.json"
++    codesign --force --timestamp --sign "$IDENTITY" --identifier be.noorder.browser.webkit.appcast "$SIGNED/appcast.json"
+     ditto -c -k --sequesterRsrc "$SIGNED/appcast.json" "$OUT/appcast.json.zip"
+     rm -rf "$SIGNED"
+     echo "signed: $OUT/appcast.json.zip"
+diff --git a/engine.sh b/engine.sh
+index 3d885c9..464117e 100755
+--- a/engine.sh
++++ b/engine.sh
+@@ -19,7 +19,7 @@ LLAMA_TAG="v0.5.0"
+ LLAMA_COMMIT="7fe450e19305b828c199d602c23a8337aaa1f03b"
+ OUT="build/engine"
+ SRC="$OUT/llama.cpp"
+-IDENTIFIER="com.officecommun.search.ai-engine"
++IDENTIFIER="be.noorder.browser.webkit.ai-engine"
+ JOBS=$(sysctl -n hw.logicalcpu)
+ which="${1:-all}"
+ 
+diff --git a/publish.sh b/publish.sh
+index de6b9b6..0b6e51e 100755
+--- a/publish.sh
++++ b/publish.sh
+@@ -37,7 +37,7 @@ rm -rf "$CHIP"
+ # read only it, and a broken one would stop every update without a word.
+ CHECK="$(mktemp -d)"
+ ditto -x -k "$FROM/appcast.json.zip" "$CHECK"
+-codesign --verify -R='anchor apple generic and identifier "com.officecommun.search.appcast" and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = "7BYKA895MC"' "$CHECK/appcast.json" \
++codesign --verify -R='anchor apple generic and identifier "be.noorder.browser.webkit.appcast" and certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = "7BYKA895MC"' "$CHECK/appcast.json" \
+   || { rm -rf "$CHECK"; echo "$FROM/appcast.json.zip doesn't verify — not publishing" >&2; exit 1; }
+ cmp -s "$CHECK/appcast.json" "$FROM/appcast.json" || { rm -rf "$CHECK"; echo "the signed appcast isn't $FROM/appcast.json — not publishing" >&2; exit 1; }
+ rm -rf "$CHECK"

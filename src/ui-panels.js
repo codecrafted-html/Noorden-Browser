@@ -49,6 +49,7 @@
     if(kind==='bookmarks')for(const b of s.bookmarks)list.append(utilityRow(b.title,b.url,'star',[['Openen',()=>send('navigate',b.url)]]));
     if(kind==='settings'){
       const addSelect=(title,options,value,onchange)=>{const row=document.createElement('div'),label=document.createElement('label'),select=document.createElement('select');row.className='settings-row';label.textContent=title;for(const [v,text] of options){const option=document.createElement('option');option.value=v;option.textContent=text;select.append(option);}select.value=String(value);select.onchange=()=>onchange(select.value);row.append(label,select);list.append(row);};
+      addSelect('Tabbladen',[['left','Links'],['top','Bovenaan']],s.settings.tabPosition,v=>send('setting',{tabPosition:v}));
       addSelect('Uiterlijk',[['system','Systeem'],['light','Licht'],['dark','Donker']],s.settings.theme,v=>send('setting',{theme:v}));
       addSelect('Geheugenbesparing',[['0','Uit'],['2','Na 2 minuten'],['5','Na 5 minuten'],['15','Na 15 minuten']],s.settings.sleepMinutes,v=>send('setting',{sleepMinutes:+v}));
       const row=document.createElement('div'),label=document.createElement('label'),box=document.createElement('input');row.className='settings-row';label.textContent='Bladwijzerbalk tonen';box.type='checkbox';box.checked=s.settings.bookmarkBar;box.onchange=()=>send('setting',{bookmarkBar:box.checked});row.append(label,box);list.append(row);

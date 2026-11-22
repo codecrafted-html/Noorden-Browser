@@ -1,5 +1,5 @@
 'use strict';
-const defaults = { sleepMinutes: 5, bookmarkBar: true, theme: 'dark', themeVersion: 2, exceptions: [] };
+const defaults = { tabPosition:"left", sleepMinutes: 5, bookmarkBar: true, theme: 'dark', themeVersion: 2, exceptions: [] };
 function isWebUrl(value) { try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) && !!u.hostname; } catch { return false; } }
 function addressToUrl(value) {
   const s = String(value || '').trim(); if (!s) return '';
@@ -12,7 +12,7 @@ function addressToUrl(value) {
 }
 function host(value) { try { return new URL(value).hostname; } catch { return ''; } }
 function normalizeSettings(value = {}) {
-  return { sleepMinutes: [0,2,5,15].includes(value.sleepMinutes) ? value.sleepMinutes : 5, bookmarkBar: value.bookmarkBar !== false,
+  return { tabPosition:value.tabPosition==='top'?'top':'left', sleepMinutes: [0,2,5,15].includes(value.sleepMinutes) ? value.sleepMinutes : 5, bookmarkBar: value.bookmarkBar !== false,
     theme: ['light','dark','system'].includes(value.theme) ? value.theme : 'dark', themeVersion: 2,
     exceptions: Array.isArray(value.exceptions) ? [...new Set(value.exceptions.filter(x => typeof x === 'string' && /^[a-z0-9.-]+$/i.test(x)).map(x => x.toLowerCase()))].slice(0,200) : [] };
 }

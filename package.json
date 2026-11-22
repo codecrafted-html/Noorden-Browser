@@ -1,13 +1,13 @@
 {
   "name": "noorder-browser",
-  "version": "2.3.3",
+  "version": "3.0.0",
   "description": "Chrome-achtige browser met geheugenbesparing voor macOS en Windows",
   "main": "src/main.js",
   "author": "Thijs",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist:mac": "electron-builder --mac dmg zip",
+    "dist:mac": "bash scripts/build-macos.sh",
     "dist:win": "electron-builder --win nsis portable",
     "test": "node --test tests/policy.test.js tests/updates.test.js",
     "dist:win:zip": "electron-builder --win zip --x64"

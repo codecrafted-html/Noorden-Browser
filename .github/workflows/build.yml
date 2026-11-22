@@ -16,47 +16,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: arm64
-            runner: macos-15
-          - arch: x64
-            runner: macos-15-intel
-    runs-on: ${{ matrix.runner }}
+        arch: [arm64, x86_64]
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - name: Bouw DMG
-        run: npx electron-builder --mac dmg --${{ matrix.arch }} --publish never
+      - name: Bouw de native Noorder Browser en controleer de bundel
+        env:
+          SEARCH_ARCH: ${{ matrix.arch }}
+        run: bash scripts/build-macos.sh
       - uses: actions/upload-artifact@v4
         with:
           name: Noorder-macOS-${{ matrix.arch }}
-          path: dist/*.dmg
-          if-no-files-found: error
-
-  mac-update:
-    runs-on: macos-15-intel
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - name: Bouw universele Mac-update
-        run: npx electron-builder --mac zip --universal --publish never
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Noorder-macOS-update
-          path: |
-            dist/*.zip
-            dist/latest-mac.yml
-            dist/*.blockmap
+          path: dist/*
           if-no-files-found: error
 
   windows:
@@ -82,7 +53,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [mac, mac-update, windows]
+    needs: [mac, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -112,13 +83,10 @@ jobs:
           shopt -s nullglob
           cp build/icon.png release-assets/Noorder-logo.png
           cp src/logo.svg release-assets/Noorder-logo.svg
-          assets=(release-assets/*.dmg release-assets/*.exe release-assets/*.zip release-assets/*.yml release-assets/*.blockmap release-assets/*.png release-assets/*.svg)
-          if [ ! -f release-assets/latest.yml ] || [ ! -f release-assets/latest-mac.yml ] || [ "${#assets[@]}" -lt 7 ]; then
-            echo 'Installatie- of updatebestanden ontbreken' >&2
-            exit 1
-          fi
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Noorder Browser ${RELEASE_TAG#v}" --notes 'Maker: Thijs. Updates worden in de app gecontroleerd en gedownload; onder Instellingen kun je opnieuw controleren of herstarten om te installeren. Windows: gebruik de NSIS-installatie voor automatische updates. Mac: installeer met de DMG. Mac-updates kunnen door macOS worden geweigerd zolang de app niet met Apple Developer ID is ondertekend; gebruik dan Releases openen. De Mac-app is niet genotariseerd.'
-          fi
-          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name'
+          assets=(release-assets/*.pkg release-assets/*.dmg release-assets/*.exe release-assets/*.zip release-assets/*.yml release-assets/*.blockmap release-assets/*.png release-assets/*.svg)
+          for arch in arm64 x86_64; do
+            for ext in dmg pkg zip; do test -s "release-assets/Noorder-Browser-${RELEASE_TAG#v}-macOS-$arch.$ext"; done
+          done
+          test -s release-assets/latest.yml
+          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --draft --title "Noorder Browser ${RELEASE_TAG#v}" --notes-file RELEASE.md "${assets[@]}"
+          gh release edit "$RELEASE_TAG" --draft=false --latest

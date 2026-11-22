@@ -70,7 +70,7 @@ function registerDownload(item,wc){
   item.on('updated',()=>{download.total=item.getTotalBytes();download.received=item.getReceivedBytes();broadcast();});
   item.once('done',(_event,state)=>{download.state=state;download.received=item.getReceivedBytes();download.total=item.getTotalBytes();activeDownloads.delete(download.id);if(tab)tab.downloading=Math.max(0,tab.downloading-1);save();broadcast();});
 }
-function bounds() { if (!win || win.isDestroyed()) return; const t=current(); if(alive(t)) { const {width,height}=win.getContentBounds(), y=settings.bookmarkBar?126:96; t.view.setBounds({x:0,y,width,height:Math.max(1,height-y)}); } }
+function bounds() { if (!win || win.isDestroyed()) return; const t=current(); if(alive(t)) { const {width,height}=win.getContentBounds(), x=settings.tabPosition==='left'?200:0, y=(settings.bookmarkBar?126:96)-(x?12:0); t.view.setBounds({x,y,width:Math.max(1,width-x),height:Math.max(1,height-y)}); } }
 function detach(t) { if(alive(t) && win && !win.isDestroyed()) { try { win.contentView.removeChildView(t.view); t.view.setVisible(false); } catch {} } }
 function attach(t) { if(alive(t) && win && !win.isDestroyed()) { win.contentView.addChildView(t.view); t.view.setVisible(!overlayOpen); bounds(); } }
 function makeTab(url='', kind='home') { return {id:nextId++,kind,url,title:kind==='performance'?'Prestaties':'Nieuw tabblad',favicon:'',group:'',hasIconLink:false,view:null,history:null,suspended:false,loading:false,error:'',dirty:false,media:false,pinned:false,downloading:0,unloadBlocked:false,lastActive:Date.now(),recentAudio:0,pendingSleep:false}; }
