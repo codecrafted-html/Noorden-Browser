@@ -1,0 +1,1691 @@
+import AppKit
+import WebKit
+
+// A video that keeps playing after you have gone somewhere else, in a small
+// window that stays above everything — other tabs, and other apps.
+//
+// WebKit will not hand a video to the system's picture-in-picture without a
+// real click on the page, and nothing the app does counts as one. Chromium is
+// looser, which is why this works elsewhere and refused here.
+//
+// So the engine is not asked. The page itself is moved: everything but the
+// video is made invisible, the video is stretched to fill the viewport, and the
+// whole web view is lifted out of the window and into a small floating one. The
+// video never stops, because it is the same page it always was — it has only
+// changed windows.
+
+@MainActor
+final class Float {
+    private var panel: NSPanel?
+    private var controls: Controls?
+    private weak var page: NSView?
+
+    /// Asked to go away. The browser does the bookkeeping and calls back into
+    /// `drop` — there is one way this window closes, and it is not this class
+    /// quietly tidying up behind everyone's back. Two paths to closing is how
+    /// it stayed on screen after the page had already gone home.
+    var onClose: (() -> Void)?
+    /// Bring the window forward and go to the tab it came from.
+    var onReturn: (() -> Void)?
+    /// Stop or start the video. Answers with whether it is playing now.
+    var onPlayPause: ((@escaping (Bool) -> Void) -> Void)?
+    /// Step over the bit you missed, or back to it.
+    var onSkip: ((Double) -> Void)?
+    /// Asked every half second while the window is up, for the line along the
+    /// bottom edge.
+    var onProgress: ((@escaping (Double, Bool) -> Void) -> Void)?
+    /// Asked every half second while the window is up: whether the video
+    /// has gone from its page (Isolate.gone), and the window with it.
+    var onGone: ((@escaping (Bool) -> Void) -> Void)?
+
+    private var ticker: Timer?
+
+    var showing: Bool { panel != nil }
+
+    /// Over the page while it is still laid out for the tab it came from: the
+    /// video's last frame there, or the window's black where there is none.
+    /// Until then the window showed that old layout, the video a fraction of
+    /// itself in one corner, and then the video jumped to fill it.
+    private var cover: NSView?
+    private let settling = Settling()
+
+    /// Whether the cover is up, and whether it shows a frame of the video
+    /// (see `film float` in Bench.swift).
+    var covered: Bool { cover != nil }
+    var coveredByStill: Bool { cover?.layer?.contents != nil }
+
+    /// Where a test run's bench opens the window instead: off every screen,
+    /// at the size it would have had, and not remembered (see `film float`
+    /// in Bench.swift). Nil everywhere else.
+    static var benchAway: NSPoint?
+
+    /// Two fingers flick the window to a corner instead of pushing it
+    /// along (Settings › General). Off unless asked for.
+    static var flicks = false
+
+    /// A button that tucks the window into a corner (Settings › Browsing).
+    /// Off unless asked for. The window up now hears a change at once.
+    static weak var shown: Float?
+    static var minimizes = false {
+        didSet { shown?.controls?.offerMinimize(minimizes) }
+    }
+
+    /// The minimize button, pressed with no pointer. For the bench.
+    func benchTuck() { controls?.benchMinimize() }
+
+    /// Where a flick sends the window, a margin in from the edges of
+    /// `area`. A swipe clearly both ways — between about 22° and 68° — takes
+    /// it to the corner it points at; a straighter one along its stronger
+    /// direction, against whichever of the other two edges it is nearer.
+    nonisolated static func corner(for frame: NSRect, in area: NSRect, toward way: CGVector, margin: CGFloat = 12) -> NSPoint {
+        let left = area.minX + margin, right = area.maxX - margin - frame.width
+        let bottom = area.minY + margin, top = area.maxY - margin - frame.height
+        let across = abs(way.dx), up = abs(way.dy)
+        let x = way.dx > 0 ? right : left, y = way.dy > 0 ? top : bottom
+        if min(across, up) >= 0.4 * max(across, up) { return NSPoint(x: x, y: y) }
+        if across >= up { return NSPoint(x: x, y: frame.midY > area.midY ? top : bottom) }
+        return NSPoint(x: frame.midX > area.midX ? right : left, y: y)
+    }
+
+    /// Where docking leaves the window: off the side of `area`, but for a
+    /// sliver to bring it back by.
+    nonisolated static func docked(_ frame: NSRect, right: Bool, in area: NSRect, sliver: CGFloat = 10) -> NSPoint {
+        NSPoint(x: right ? area.maxX - sliver : area.minX - frame.width + sliver, y: frame.minY)
+    }
+
+    /// Whether the window can go into that side of `area`, one of `screens`:
+    /// not where another screen carries on, where it would only slide onto
+    /// that one instead.
+    nonisolated static func dockable(_ frame: NSRect, right: Bool, in area: NSRect, screens: [NSRect]) -> Bool {
+        let beyond = NSRect(x: right ? area.maxX : area.minX - frame.width, y: frame.minY, width: frame.width, height: frame.height)
+        return !screens.contains { !$0.contains(area) && $0.intersects(beyond) }
+    }
+
+    /// Screens a test run's bench makes up, far off the real ones, for the
+    /// window to flick and dock about (see `float` in Bench.swift). Nil
+    /// everywhere else.
+    static var benchScreens: [NSRect]?
+
+    /// `still`: the video as it was in its tab, cut out of a picture of the
+    /// page with the rest of it hidden (see `still(of:picture:page:)`),
+    /// shown until the page is laid out at this window's size.
+    func lift(_ page: NSView, still: NSImage? = nil) {
+        guard panel == nil else { return }
+        self.page = page
+
+        let size = NSSize(width: 440, height: 247)
+        let screen = NSScreen.main?.visibleFrame ?? .zero
+        // Where it was last, at the size it was, if a screen still shows it;
+        // otherwise the bottom right of this one.
+        var spot = Float.remembered ?? NSRect(
+            x: screen.maxX - size.width - 24,
+            y: screen.minY + 24,
+            width: size.width,
+            height: size.height
+        )
+        if let away = Float.benchAway { spot.origin = away }
+
+        let panel = Panel(
+            contentRect: spot,
+            styleMask: [.borderless, .resizable, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        // Above every ordinary window, this app's and everyone else's, and
+        // present on whichever desktop you happen to be looking at.
+        panel.level = .floating
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isMovableByWindowBackground = true
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        // No shadow. A window with one is composited by WindowServer on every
+        // frame of the video; without it the video can go straight to the
+        // display, as it does in a tab. Measured on 1080p and 4K YouTube:
+        // WindowServer's GPU time 28% with the shadow, 16–20% without, 22%
+        // playing in the tab.
+        panel.hasShadow = false
+        panel.isReleasedWhenClosed = false
+        // The bench's, off every screen, is left out when a probe is hidden.
+        panel.canHide = Float.benchAway == nil
+        panel.aspectRatio = size
+        // Kept once a move or a resize is over, not on each step of one: at
+        // the end of a resize by its edges, as it closes (see drop), and as
+        // the app quits with it open, which closes nothing.
+        let keep: (Notification.Name, AnyObject) -> NSObjectProtocol = { name, object in
+            NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    if let frame = self?.restingFrame { Float.remembered = frame }
+                }
+            }
+        }
+        keeping = [
+            keep(NSWindow.didEndLiveResizeNotification, panel),
+            keep(NSApplication.willTerminateNotification, NSApp),
+        ]
+        panel.minSize = NSSize(width: 260, height: 146)
+
+        // At the size the window opens at. Built at the default size and
+        // then stretched to a remembered one, the page was laid out twice,
+        // and the first frames of video filled only part of the window
+        // (#257).
+        let ground = NSView(frame: NSRect(origin: .zero, size: spot.size))
+        ground.wantsLayer = true
+        ground.layer?.backgroundColor = NSColor.black.cgColor
+        ground.layer?.cornerRadius = 14
+        ground.layer?.masksToBounds = true
+
+        // WebKit puts its own pinch recogniser on a web view, and a gesture
+        // recogniser is consulted before the responder chain is. With it left
+        // on, every pinch aimed at this window went into zooming the page
+        // inside it instead of sizing the window. It comes back on landing.
+        (page as? WKWebView)?.allowsMagnification = false
+
+        page.removeFromSuperview()
+        page.frame = ground.bounds
+        page.autoresizingMask = [.width, .height]
+        ground.addSubview(page)
+
+        // WebKit takes a moment to lay a page out at a new size, a third of
+        // a second for YouTube's, and shows the layout it had meanwhile. The
+        // still covers that moment, fitted as the video itself will be.
+        let cover = NSView(frame: ground.bounds)
+        cover.wantsLayer = true
+        cover.layer?.backgroundColor = NSColor.black.cgColor
+        cover.layer?.contents = still?.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        cover.layer?.contentsGravity = .resizeAspect
+        cover.autoresizingMask = [.width, .height]
+        ground.addSubview(cover)
+        self.cover = cover
+
+        let controls = Controls(frame: ground.bounds)
+        controls.autoresizingMask = [.width, .height]
+        controls.onClose = { [weak self] in self?.onClose?() }
+        controls.onReturn = { [weak self] in self?.onReturn?() }
+        controls.onPlayPause = { [weak self] in
+            self?.onPlayPause? { playing in
+                self?.controls?.playing = playing
+            }
+        }
+        controls.onSkip = { [weak self] seconds in self?.onSkip?(seconds) }
+        // Brought up to date as the pointer arrives, being asked for only
+        // while it is there.
+        controls.onEnter = { [weak self] in self?.refreshControls() }
+        ground.addSubview(controls)
+        self.controls = controls
+
+        panel.contentView = ground
+        panel.orderFrontRegardless()
+        self.panel = panel
+        Float.shown = self
+
+        // Off once the page has drawn a frame at the window's size with the
+        // video alone in it, and never later than the limit: a page that
+        // stops answering does not leave the window frozen.
+        if let web = page as? WKWebView {
+            let zoom = max(web.pageZoom, 0.1)
+            web.evaluateInSearch(Isolate.fits(width: spot.width / zoom, height: spot.height / zoom))
+            settling.watch(web, within: 0.8) { [weak self] in self?.uncover() }
+        } else {
+            uncover()
+        }
+
+        ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+
+                // A window that no longer holds the page has nothing to show
+                // and no reason to exist. Something else took the page back —
+                // and rather than hunt every path that could, this makes it
+                // impossible for the empty black rectangle to outlive it by
+                // more than half a second.
+                if self.page?.superview !== ground {
+                    self.onClose?()
+                    return
+                }
+
+                // The bar and the pause button are drawn only while the
+                // pointer is over the window: asked then, not every half
+                // second for a page nobody is looking at.
+                if self.controls?.isNear == true { self.refreshControls() }
+
+                // A video that ended or went closes its window, rather than
+                // leave the page's black in it (idea 923).
+                self.onGone? { [weak self] gone in
+                    guard gone, let self, self.panel != nil, self.page?.superview === ground else { return }
+                    self.onClose?()
+                }
+            }
+        }
+    }
+
+    /// How far through the video is, and whether it plays, for the controls.
+    private func refreshControls() {
+        onProgress? { [weak self] through, playing in
+            self?.controls?.progress = through
+            self?.controls?.playing = playing
+        }
+    }
+
+    /// The window's last place and size, kept across closing it and quitting,
+    /// and given back only while a screen still shows most of it.
+    private static var remembered: NSRect? {
+        get {
+            guard let text = Store.settings.string(forKey: "float.frame") else { return nil }
+            let frame = NSRectFromString(text)
+            let shown = NSScreen.screens.contains {
+                let seen = $0.visibleFrame.intersection(frame)
+                return seen.width * seen.height > 0.6 * frame.width * frame.height
+            }
+            return frame.width > 100 && shown ? frame : nil
+        }
+        set {
+            guard benchAway == nil else { return }
+            Store.settings.set(newValue.map(NSStringFromRect), forKey: "float.frame")
+        }
+    }
+
+    private var keeping: [NSObjectProtocol] = []
+
+    /// Where the window is, or was before it was docked at a side: a docked
+    /// window is kept as it was, not as the sliver it is.
+    private var restingFrame: NSRect? {
+        guard let panel else { return nil }
+        if let home = controls?.tuckedFrom { return home }
+        guard let home = controls?.dockedFrom else { return panel.frame }
+        return NSRect(origin: home, size: panel.frame.size)
+    }
+
+    /// Puts the page down and closes. Whoever owns the page takes it back on
+    /// their next layout.
+    func drop() {
+        guard let panel else { return }
+        settling.stop()
+        cover = nil
+        if let frame = restingFrame { Float.remembered = frame }
+        keeping.forEach(NotificationCenter.default.removeObserver)
+        keeping = []
+        ticker?.invalidate()
+        ticker = nil
+        if Float.shown === self { Float.shown = nil }
+        (page as? WKWebView)?.allowsMagnification = true
+        page?.removeFromSuperview()
+        page = nil
+        controls = nil
+        panel.orderOut(nil)
+        panel.close()
+        self.panel = nil
+    }
+
+    /// The live page from under the still. A short fade, for the frames of
+    /// film that went by while it was up.
+    private func uncover() {
+        guard let cover else { return }
+        self.cover = nil
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Motion.seconds(0.12)
+            cover.animator().alphaValue = 0
+        }, completionHandler: {
+            cover.removeFromSuperview()
+        })
+    }
+
+    /// The video's picture, cut out of a picture of its whole page. `picture`
+    /// is where the video's picture sits in the page, and `page` the page's
+    /// size, both in the page's own pixels. Nil unless nearly all of it was
+    /// on screen: half a video, stretched to fill the window, is not the
+    /// video.
+    static func still(of shot: NSImage, picture: [Double], page: [Double]) -> NSImage? {
+        guard picture.count == 4, page.count == 2, page[0] > 0, page[1] > 0,
+              picture[2] > 0, picture[3] > 0,
+              let whole = shot.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return nil }
+        let box = CGRect(x: picture[0], y: picture[1], width: picture[2], height: picture[3])
+        let seen = box.intersection(CGRect(x: 0, y: 0, width: page[0], height: page[1]))
+        guard !seen.isNull, seen.width * seen.height >= 0.95 * box.width * box.height else { return nil }
+        // An image's rows run down from the top, as a page's do.
+        let scale = CGFloat(whole.width) / page[0]
+        let cut = CGRect(x: seen.minX * scale, y: seen.minY * scale, width: seen.width * scale, height: seen.height * scale)
+            .integral.intersection(CGRect(x: 0, y: 0, width: whole.width, height: whole.height))
+        guard let part = whole.cropping(to: cut) else { return nil }
+        return NSImage(cgImage: part, size: NSSize(width: seen.width, height: seen.height))
+    }
+
+    /// What a small window of video needs, and nothing else: a way out, a way
+    /// back, and, when Settings asks, a way to tuck it small. A way to stop
+    /// it, and a way to step over the bit you missed.
+    ///
+    /// Out of sight until the pointer is over the window — the whole point of
+    /// this window is the picture.
+    private final class Controls: NSView {
+        var onClose: (() -> Void)?
+        var onReturn: (() -> Void)?
+        var onPlayPause: (() -> Void)?
+        var onSkip: ((Double) -> Void)?
+        var onEnter: (() -> Void)?
+
+        var playing = true {
+            didSet { pause.image = glyph(playing ? "pause.fill" : "play.fill", 17) }
+        }
+
+        /// Nought to one. Drawn as a hairline along the bottom edge.
+        var progress: Double = 0 {
+            didSet { line.through = progress }
+        }
+
+        private let close = NSButton()
+        private let tuck = NSButton()
+        private let back = NSButton()
+        private let pause = NSButton()
+        private let rewind = NSButton()
+        private let forward = NSButton()
+        private let scrim = CAGradientLayer()
+        private let line = Line()
+        private var near = false
+        /// Whether the pointer is over the window, where the controls show.
+        var isNear: Bool { near }
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+
+            // A wash at the top and bottom, so white buttons hold against a
+            // bright frame of film without covering it.
+            scrim.colors = [
+                NSColor(white: 0, alpha: 0.45).cgColor,
+                NSColor(white: 0, alpha: 0).cgColor,
+                NSColor(white: 0, alpha: 0).cgColor,
+                NSColor(white: 0, alpha: 0.5).cgColor,
+            ]
+            scrim.locations = [0, 0.28, 0.66, 1]
+            scrim.opacity = 0
+            layer?.addSublayer(scrim)
+
+            dress(close, "xmark", 11, round: 15, action: #selector(pressedClose))
+            dress(tuck, "minus", 11, round: 15, action: #selector(pressedMinimize))
+            tuck.isHidden = !Float.minimizes
+            dress(back, "arrow.up.forward", 12, round: 15, action: #selector(pressedReturn))
+            dress(rewind, "gobackward.15", 15, round: 19, action: #selector(pressedRewind))
+            dress(pause, "pause.fill", 17, round: 25, action: #selector(pressedPause))
+            dress(forward, "goforward.15", 15, round: 19, action: #selector(pressedForward))
+
+            line.alphaValue = 0
+            addSubview(line)
+            buttons.forEach { $0.alphaValue = 0 }
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        private var buttons: [NSButton] { [close, tuck, back, rewind, pause, forward] }
+
+        private func dress(
+            _ button: NSButton,
+            _ symbol: String,
+            _ size: CGFloat,
+            round: CGFloat,
+            action: Selector
+        ) {
+            button.image = glyph(symbol, size)
+            button.isBordered = false
+            button.bezelStyle = .regularSquare
+            button.imagePosition = .imageOnly
+            button.target = self
+            button.action = action
+            button.wantsLayer = true
+            button.layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.55).cgColor
+            button.layer?.cornerRadius = round
+            addSubview(button)
+        }
+
+        private func glyph(_ name: String, _ size: CGFloat) -> NSImage? {
+            let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+            let look = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
+                .applying(.init(paletteColors: [.white]))
+            return image?.withSymbolConfiguration(look)
+        }
+
+        override func layout() {
+            super.layout()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            scrim.frame = bounds
+            CATransaction.commit()
+
+            close.frame = NSRect(x: 14, y: bounds.height - 44, width: 30, height: 30)
+            tuck.frame = NSRect(x: 52, y: bounds.height - 44, width: 30, height: 30)
+            back.frame = NSRect(x: bounds.width - 44, y: bounds.height - 44, width: 30, height: 30)
+
+            let middle = bounds.midY - 25
+            pause.frame = NSRect(x: bounds.midX - 25, y: middle, width: 50, height: 50)
+            rewind.frame = NSRect(x: bounds.midX - 25 - 54, y: middle + 6, width: 38, height: 38)
+            forward.frame = NSRect(x: bounds.midX + 25 + 16, y: middle + 6, width: 38, height: 38)
+
+            line.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 3)
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(
+                NSTrackingArea(
+                    rect: bounds,
+                    options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                    owner: self
+                )
+            )
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            fade(to: 1)
+            onEnter?()
+        }
+        override func mouseExited(with event: NSEvent) { fade(to: 0) }
+
+        private func fade(to value: CGFloat) {
+            near = value > 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Motion.seconds(0.16)
+                buttons.forEach { $0.animator().alphaValue = value }
+                line.animator().alphaValue = value
+            }
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(Motion.seconds(0.16))
+            scrim.opacity = Swift.Float(value)
+            CATransaction.commit()
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        /// Everything reaches this layer.
+        ///
+        /// isMovableByWindowBackground never worked here: the window's whole
+        /// background is a web view, and a web view swallows every drag before
+        /// the window sees it. So every gesture is taken here, above it.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            let inside = convert(point, from: superview)
+            if near {
+                for button in buttons where !button.isHidden && button.frame.contains(inside) {
+                    return button
+                }
+            }
+            return self
+        }
+
+        // MARK: - moving and sizing
+
+        private var grab = NSPoint.zero
+        private var origin = NSRect.zero
+        private var stretching = false
+
+        private func atCorner(_ point: NSPoint) -> Bool {
+            point.x > bounds.maxX - 22 && point.y < bounds.minY + 22
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(
+                NSRect(x: bounds.maxX - 22, y: bounds.minY, width: 22, height: 22),
+                cursor: .crosshair
+            )
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+            // A click on the sliver of a docked window brings it back.
+            if docked != nil {
+                undock()
+                ignoringDrag = true
+                return
+            }
+            ignoringDrag = false
+            stopGlide()
+            grab = NSEvent.mouseLocation
+            origin = window.frame
+            stretching = atCorner(convert(event.locationInWindow, from: nil))
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let window, !ignoringDrag else { return }
+            let now = NSEvent.mouseLocation
+            let dx = now.x - grab.x
+            let dy = now.y - grab.y
+
+            guard stretching else {
+                window.setFrameOrigin(NSPoint(x: origin.minX + dx, y: origin.minY + dy))
+                return
+            }
+            resize(to: origin.width + dx, from: origin)
+        }
+
+        /// Two fingers on the trackpad move the window. There is nothing to
+        /// scroll here — the window holds one picture — so the gesture is free
+        /// to mean the thing you actually want it to mean.
+        ///
+        /// And the pointer travels with it. Moving the window alone leaves the
+        /// cursor behind: it drifts towards the edge, falls out, and the window
+        /// stops answering mid-gesture. Carrying it keeps it at the same place
+        /// in the frame, so the window can be pushed as far as the screen goes.
+        override func scrollWheel(with event: NSEvent) {
+            guard let window else { return }
+            // Only while fingers are actually down. Letting the glide continue
+            // would fling the pointer across the screen after them.
+            guard event.momentumPhase == [] else { return }
+            if Float.flicks { return flickWheel(with: event) }
+            // Docked, and flicks turned off since: out first, where it was.
+            if docked != nil { return undock() }
+
+            let dx = event.scrollingDeltaX
+            let dy = event.scrollingDeltaY
+            guard dx != 0 || dy != 0 else { return }
+
+            let spot = window.frame.origin
+            window.setFrameOrigin(NSPoint(x: spot.x + dx, y: spot.y - dy))
+
+            // Screen coordinates run up from the bottom, the cursor's run down
+            // from the top of the first display.
+            guard let ground = NSScreen.screens.first else { return }
+            let mouse = NSEvent.mouseLocation
+            CGWarpMouseCursorPosition(
+                CGPoint(
+                    x: mouse.x + dx,
+                    y: ground.frame.height - (mouse.y - dy)
+                )
+            )
+            // Without this the pointer and the physical trackpad stay parted
+            // for a moment, and the next flick arrives from the wrong place.
+            CGAssociateMouseAndMouseCursorPosition(1)
+        }
+
+        /// Two fingers flick the window to a corner, as in Dia and Arc: a
+        /// swipe up takes it to the top on the side it is on, a swipe left to
+        /// the left at the height it is at, a diagonal one to that corner —
+        /// one move a swipe, however long the swipe. Dragging it anywhere is
+        /// still the click's.
+        private var swipe: CGVector = .zero
+        private var flicked = false
+        /// For a wheel, which has no gesture to belong to: one flick a turn.
+        private var lastWheelFlick = Date.distantPast
+
+        private func flickWheel(with event: NSEvent) {
+            // Which way the fingers went, on screen: with natural scrolling
+            // the deltas run with the fingers, without it against them.
+            let sign: CGFloat = event.isDirectionInvertedFromDevice ? 1 : -1
+            let step = CGVector(dx: sign * event.scrollingDeltaX, dy: -sign * event.scrollingDeltaY)
+
+            if event.phase == [] {
+                // A mouse's wheel: every turn is a flick, a moment apart.
+                guard Date().timeIntervalSince(lastWheelFlick) > 0.4, step != .zero else { return }
+                lastWheelFlick = Date()
+                if docked != nil {
+                    if inward(step) { undock() }
+                } else if let side = against(), outward(step, from: side) {
+                    dock(side)
+                } else {
+                    flick(step)
+                }
+                return
+            }
+            if event.phase.contains(.began) {
+                swipe = .zero
+                flicked = false
+                pulling = nil
+                pullFrom = window?.frame.origin ?? .zero
+            }
+            swipe.dx += step.dx
+            swipe.dy += step.dy
+            let lifted = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+
+            // Docked: a swipe back towards the middle brings it out.
+            if docked != nil {
+                if !flicked, inward(swipe), abs(swipe.dx) > 24 || lifted {
+                    flicked = true
+                    undock()
+                }
+                if lifted {
+                    swipe = .zero
+                    flicked = false
+                }
+                return
+            }
+
+            // Against a side, and swiped at it: it gives, heavily, under the
+            // fingers, and on lifting either goes into the side — only a
+            // sliver left — or springs back out.
+            if pulling == nil, !flicked, let side = against(), outward(swipe, from: side), abs(swipe.dx) > 6 {
+                pulling = side
+                // A spring still settling from the last one would pull the
+                // other way, a frame at a time.
+                stopGlide()
+            }
+            if pulling != nil {
+                window?.setFrameOrigin(NSPoint(x: pullFrom.x + swipe.dx * Controls.give, y: pullFrom.y))
+                // The window moves out from under the pointer as it gives, and
+                // the fingers lifting can then be told to whatever is under
+                // it instead: if nothing more comes, the pull is over anyway.
+                settling?.cancel()
+                let settle = DispatchWorkItem { [weak self] in self?.letGo() }
+                settling = settle
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: settle)
+                if lifted { letGo() }
+                return
+            }
+            // Read from the whole swipe, as the fingers lift: a swipe often
+            // sets off along one side before it turns diagonal, and read
+            // early it went the wrong way. A long one doesn't wait.
+            let length = hypot(swipe.dx, swipe.dy)
+            if !flicked, length > 120 || (lifted && length > 20) {
+                flicked = true
+                flick(swipe)
+            }
+            if lifted {
+                swipe = .zero
+                flicked = false
+            }
+        }
+
+        // Docking at a side, as in Dia: a strong swipe at the side the window
+        // is against slides it off, leaving a sliver to bring it back by.
+        enum Side { case left, right }
+        private(set) var docked: Side?
+        /// Where it was before it docked: where it goes back to.
+        private(set) var dockedFrom: NSPoint?
+        private var pulling: Side?
+        private var pullFrom: NSPoint = .zero
+        private var ignoringDrag = false
+        /// How much of it stays on screen, docked.
+        static let sliver: CGFloat = 10
+        /// How far the fingers go at the side before letting go docks it.
+        static let dockAt: CGFloat = 90
+        /// How much the window gives under the fingers while pulled at a side.
+        static let give: CGFloat = 0.35
+
+        /// The usable part of the screen the window is on.
+        private var area: NSRect? {
+            if let made = Float.benchScreens, let window {
+                let middle = NSPoint(x: window.frame.midX, y: window.frame.midY)
+                return made.first { $0.contains(middle) } ?? made.first
+            }
+            return (window?.screen ?? NSScreen.main)?.visibleFrame
+        }
+
+        /// The side the window is up against, if it is, and if it can go
+        /// into it.
+        private func against() -> Side? {
+            guard let window, let area else { return nil }
+            let screens = Float.benchScreens ?? NSScreen.screens.map(\.frame)
+            if window.frame.maxX >= area.maxX - 16,
+               Float.dockable(window.frame, right: true, in: area, screens: screens) { return .right }
+            if window.frame.minX <= area.minX + 16,
+               Float.dockable(window.frame, right: false, in: area, screens: screens) { return .left }
+            return nil
+        }
+
+        /// Clearly sideways, and at that side.
+        private func outward(_ way: CGVector, from side: Side) -> Bool {
+            abs(way.dx) > abs(way.dy) * 1.2 && (side == .right ? way.dx > 0 : way.dx < 0)
+        }
+
+        /// Back towards the middle from the side it is docked at.
+        private func inward(_ way: CGVector) -> Bool {
+            guard let docked else { return false }
+            return abs(way.dx) > abs(way.dy) && (docked == .right ? way.dx < 0 : way.dx > 0)
+        }
+
+        private var settling: DispatchWorkItem?
+
+        /// A pull at a side over: into the side, or back out.
+        private func letGo() {
+            settling?.cancel()
+            settling = nil
+            guard let side = pulling else { return }
+            if outward(swipe, from: side), abs(swipe.dx) >= Controls.dockAt {
+                dock(side, from: pullFrom)
+            } else {
+                glide(to: pullFrom, bouncing: true)
+            }
+            pulling = nil
+            swipe = .zero
+            flicked = false
+        }
+
+        private func dock(_ side: Side, from origin: NSPoint? = nil) {
+            guard let window, let area else { return }
+            dockedFrom = origin ?? window.frame.origin
+            docked = side
+            glide(to: Float.docked(window.frame, right: side == .right, in: area, sliver: Controls.sliver))
+        }
+
+        private func undock() {
+            guard let window else { return }
+            let back = dockedFrom ?? window.frame.origin
+            docked = nil
+            dockedFrom = nil
+            glide(to: back, bouncing: true)
+        }
+
+        /// To the corner the swipe points at, a margin in from the edges of
+        /// the screen's usable part.
+        private func flick(_ way: CGVector) {
+            guard let window, let area else { return }
+            let target = Float.corner(for: window.frame, in: area, toward: way)
+            guard target != window.frame.origin else { return }
+            glide(to: target)
+        }
+
+        // The glide, a frame at a time off the display's own refresh — 120
+        // a second on a ProMotion screen, where AppKit's window animation
+        // stepped at 60 — on a critically damped spring: quick away,
+        // settling into the corner without overshooting it.
+        private var gliding: CADisplayLink?
+        private var glideFrom: NSPoint = .zero
+        private var glideTo: NSPoint = .zero
+        private var glideStart: CFTimeInterval = 0
+        /// Back out from a side: a spring that goes a little past and settles.
+        private var glideBounces = false
+
+        private func glide(to target: NSPoint, bouncing: Bool = false) {
+            guard let window else { return }
+            glideBounces = bouncing
+            glideFrom = window.frame.origin
+            glideTo = target
+            glideStart = CACurrentMediaTime()
+            if window.screen == nil {
+                // On no screen — the bench's window, off every one — there
+                // is no display to keep time by: a clock does instead.
+                ticking = ticking ?? Timer.scheduledTimer(withTimeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.glideStep() }
+                }
+            } else if gliding == nil {
+                let link = displayLink(target: self, selector: #selector(glideStep(_:)))
+                link.add(to: .main, forMode: .common)
+                gliding = link
+            }
+        }
+
+        private var ticking: Timer?
+
+        @objc private func glideStep(_ link: CADisplayLink) { glideStep() }
+
+        private func glideStep() {
+            guard let window else { stopGlide(); return }
+            let t = CGFloat(CACurrentMediaTime() - glideStart)
+            let p: CGFloat
+            let done: Bool
+            if glideBounces {
+                // Underdamped: past the place, and back to it.
+                let omega: CGFloat = 16, zeta: CGFloat = 0.5
+                let damped = omega * sqrt(1 - zeta * zeta)
+                done = t > 0.9
+                p = done ? 1 : 1 - exp(-zeta * omega * t) * (cos(damped * t) + zeta / sqrt(1 - zeta * zeta) * sin(damped * t))
+            } else {
+                let omega: CGFloat = 15
+                done = t > 0.6
+                p = done ? 1 : 1 - (1 + omega * t) * exp(-omega * t)
+            }
+            window.setFrameOrigin(NSPoint(
+                x: glideFrom.x + (glideTo.x - glideFrom.x) * p,
+                y: glideFrom.y + (glideTo.y - glideFrom.y) * p
+            ))
+            if done { stopGlide() }
+        }
+
+        private func stopGlide() {
+            gliding?.invalidate()
+            gliding = nil
+            ticking?.invalidate()
+            ticking = nil
+        }
+
+        /// A pinch sizes it about the pointer: whatever is under your fingers
+        /// stays under your fingers, and the rest grows away from it. Sizing
+        /// about the centre instead makes the picture slide sideways under a
+        /// hand that never moved, which is what felt wrong.
+        private var pinching: CGFloat = 0
+
+        override func magnify(with event: NSEvent) {
+            guard let window else { return }
+            if event.phase == .began { pinching = 0 }
+            pinching += event.magnification
+
+            // Every event would mean a window resize, a web view relayout and a
+            // video re-fit sixty times a second, which is the stutter. Moving
+            // in steps of a fiftieth is below what an eye reads as a jump and
+            // an order of magnitude less work.
+            guard abs(pinching) > 0.02 else { return }
+            let by = pinching
+            pinching = 0
+            resize(
+                to: window.frame.width * (1 + by),
+                from: window.frame,
+                around: NSEvent.mouseLocation
+            )
+        }
+
+        private func resize(to width: CGFloat, from was: NSRect, around anchor: NSPoint? = nil) {
+            guard let window, was.width > 0 else { return }
+            let limit = NSScreen.main?.visibleFrame.width ?? 1600
+            // Keeps the shape: a video window that can be squashed is a video
+            // window showing bars.
+            let wide = min(max(window.minSize.width, width), limit * 0.85)
+            let tall = wide * was.height / was.width
+
+            let spot: NSPoint
+            if let anchor {
+                // Where the pointer sits within the window, as a fraction, kept
+                // at the same fraction of the new one.
+                let across = (anchor.x - was.minX) / was.width
+                let up = (anchor.y - was.minY) / was.height
+                spot = NSPoint(x: anchor.x - across * wide, y: anchor.y - up * tall)
+            } else {
+                spot = NSPoint(x: was.minX, y: was.maxY - tall)
+            }
+            // Not display: true — asking for an immediate redraw on every step
+            // is what makes a live resize stutter. The next frame is soon
+            // enough.
+            window.setFrame(
+                NSRect(x: spot.x, y: spot.y, width: wide, height: tall),
+                display: false
+            )
+        }
+
+        /// The frame before it was tucked, so closing remembers that size,
+        /// and a click on the button brings it back.
+        private(set) var tuckedFrom: NSRect?
+        private var tuckedMin: NSSize?
+
+        /// The minimize button, when Settings has it on. Off, and already
+        /// tucked: it comes back out, and the button goes.
+        func offerMinimize(_ on: Bool) {
+            tuck.isHidden = !on
+            if !on, tuckedFrom != nil { untuck() }
+        }
+
+        /// For the bench, which has no pointer: the button's own action.
+        func benchMinimize() {
+            offerMinimize(true)
+            pressedMinimize()
+        }
+
+        private func tuckAway() {
+            guard let window, tuckedFrom == nil, window.frame.width > 230 else { return }
+            tuckedFrom = window.frame
+            tuckedMin = window.minSize
+            let wide: CGFloat = 220
+            let tall = wide * window.frame.height / max(window.frame.width, 1)
+            window.minSize = NSSize(width: wide, height: tall)
+            var target = NSRect(x: window.frame.maxX - wide, y: window.frame.minY, width: wide, height: tall)
+            if let area {
+                target.origin.x = min(max(area.minX, target.minX), area.maxX - wide)
+                target.origin.y = min(max(area.minY, target.minY), area.maxY - tall)
+            }
+            tuck.image = glyph("plus", 11)
+            hideTransport(true)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                window.animator().setFrame(target, display: false)
+            }
+        }
+
+        private func untuck() {
+            guard let window, let home = tuckedFrom else { return }
+            let min = tuckedMin ?? NSSize(width: 260, height: 146)
+            tuckedFrom = nil
+            tuckedMin = nil
+            tuck.image = glyph("minus", 11)
+            hideTransport(false)
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.18
+                window.animator().setFrame(home, display: false)
+            }, completionHandler: {
+                window.minSize = min
+            })
+        }
+
+        private func hideTransport(_ hide: Bool) {
+            rewind.isHidden = hide
+            pause.isHidden = hide
+            forward.isHidden = hide
+            line.isHidden = hide
+        }
+
+        @objc private func pressedMinimize() {
+            if tuckedFrom != nil { untuck() } else { tuckAway() }
+        }
+
+        @objc private func pressedClose() { onClose?() }
+        @objc private func pressedReturn() { onReturn?() }
+        @objc private func pressedRewind() { onSkip?(-15) }
+        @objc private func pressedForward() { onSkip?(15) }
+        @objc private func pressedPause() {
+            playing.toggle()
+            onPlayPause?()
+        }
+
+        /// How far through, along the bottom edge. Quiet enough to ignore.
+        final class Line: NSView {
+            var through: Double = 0 {
+                didSet { needsDisplay = true }
+            }
+
+            override func draw(_ dirty: NSRect) {
+                NSColor(white: 1, alpha: 0.22).setFill()
+                bounds.fill()
+                NSColor(white: 1, alpha: 0.85).setFill()
+                NSRect(x: 0, y: 0, width: bounds.width * through, height: bounds.height).fill()
+            }
+
+            override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        }
+    }
+}
+
+/// Sites with a player worth following into the little window.
+///
+/// Anywhere else, a playing video is as likely to be a background as a film,
+/// and the difference isn't something a script can tell from the outside. So
+/// the list is of places people go to watch, and the shortcut covers the rest.
+enum Players {
+    /// A host suffix, and for a few shops that also stream, the path that
+    /// separates the film from the product page.
+    private static let known: [(host: String, path: String?)] = [
+        ("youtube.com", nil), ("youtu.be", nil), ("netflix.com", nil),
+        ("primevideo.com", nil), ("amazon.com", "/gp/video"), ("amazon.fr", "/gp/video"),
+        ("amazon.co.uk", "/gp/video"), ("amazon.de", "/gp/video"),
+        ("disneyplus.com", nil), ("tv.apple.com", nil), ("twitch.tv", nil),
+        ("vimeo.com", nil), ("dailymotion.com", nil), ("max.com", nil), ("hbomax.com", nil),
+        ("canalplus.com", nil), ("mycanal.fr", nil), ("arte.tv", nil), ("france.tv", nil),
+        ("tf1.fr", nil), ("6play.fr", nil), ("crunchyroll.com", nil), ("plex.tv", nil),
+        ("peacocktv.com", nil), ("hulu.com", nil), ("paramountplus.com", nil),
+        ("molotov.tv", nil), ("ocs.fr", nil), ("mubi.com", nil), ("criterionchannel.com", nil),
+        ("ted.com", nil), ("nebula.tv", nil), ("curiositystream.com", nil),
+    ]
+
+    /// Hosts a test run's bench counts as players' (see `film float` in
+    /// Bench.swift). Empty everywhere else.
+    static var benchHosts: Set<String> = []
+
+    static func knows(_ url: URL?) -> Bool {
+        guard let url, let host = url.host()?.lowercased() else { return false }
+        if benchHosts.contains(host) { return true }
+        let path = url.path().lowercased()
+        return known.contains { entry in
+            guard host == entry.host || host.hasSuffix("." + entry.host) else { return false }
+            guard let needle = entry.path else { return true }
+            return path.hasPrefix(needle)
+        }
+    }
+}
+
+/// Sites whose videos never float out on their own: the site card's Don't
+/// Float Videos Here (#267). Only switching tabs or apps is held back; ⇧⌘P
+/// still lifts one by hand. Kept by host, as a site's sound is, and
+/// forgotten with the other site choices (Browser.forgetCaptureChoices).
+enum Grounded {
+    static let prefix = "nofloat."
+
+    static func holds(_ host: String) -> Bool {
+        Store.settings.bool(forKey: prefix + host)
+    }
+
+    /// Off keeps nothing, as Autoplay's does.
+    static func set(_ on: Bool, for host: String) {
+        if on {
+            Store.settings.set(true, forKey: prefix + host)
+        } else {
+            Store.settings.removeObject(forKey: prefix + host)
+        }
+    }
+}
+
+/// A panel that takes key status without bringing the whole app forward.
+///
+/// Borderless windows refuse to become key by default, and a window that never
+/// becomes key is a window the system stops routing gestures to.
+private final class Panel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+/// Waits for a page moved between the tab and the floating window to settle
+/// where it now is (`Isolate.fits` going out, `Isolate.off` coming back), so
+/// that what covers it meanwhile comes off once, onto the page as it will
+/// stay. The page is asked as often as the screen draws, one question at a
+/// time, since an answer from JavaScript comes back once and not when
+/// something changes; and whatever it says, the wait is over at the limit.
+@MainActor
+final class Settling {
+    private var clock: Timer?
+    private var then: (() -> Void)?
+    private var asking = false
+    private var drawn = false
+
+    func watch(_ web: WKWebView, within limit: TimeInterval, then: @escaping () -> Void) {
+        stop()
+        self.then = then
+        let began = CACurrentMediaTime()
+        let clock = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self, weak web] timer in
+            MainActor.assumeIsolated {
+                guard let self, self.clock === timer else { return }
+                guard let web, CACurrentMediaTime() - began < limit else { return self.end() }
+                // The page is drawn as it will stay: only the videos' own
+                // pictures are left to catch up, which this side can see.
+                if self.drawn {
+                    if Settling.picturesFit(web) { self.end() }
+                    return
+                }
+                guard !self.asking else { return }
+                self.asking = true
+                web.evaluateInSearch(Isolate.settled) { answer in
+                    MainActor.assumeIsolated {
+                        guard self.clock === timer else { return }
+                        guard (answer as? Bool) == true else {
+                            self.asking = false
+                            return
+                        }
+                        // Laid out as it will stay, and drawn so by the page;
+                        // over once that frame is on screen too, video and
+                        // all. Nothing more is asked meanwhile.
+                        Settling.afterDrawing(web) {
+                            guard self.clock === timer else { return }
+                            self.drawn = true
+                            if Settling.picturesFit(web) { self.end() }
+                        }
+                    }
+                }
+            }
+        }
+        // Common modes: a landing begun by a click in the floating window is
+        // still waited for while the pointer holds something down.
+        RunLoop.main.add(clock, forMode: .common)
+        self.clock = clock
+    }
+
+    /// Once the page's view has shown what the page has drawn so far: WebKit
+    /// draws in the page's own process and hands it to this one a moment
+    /// later. At once where WebKit has no way to say.
+    private static func afterDrawing(_ web: WKWebView, _ then: @escaping () -> Void) {
+        let selector = NSSelectorFromString("_doAfterNextPresentationUpdate:")
+        guard web.responds(to: selector) else { return then() }
+        typealias Call = @convention(c) (AnyObject, Selector, @escaping @convention(block) () -> Void) -> Void
+        unsafeBitCast(web.method(for: selector), to: Call.self)(web, selector) {
+            MainActor.assumeIsolated { then() }
+        }
+    }
+
+    /// Whether every video in the page is drawn at the size it is shown.
+    /// WebKit draws a video's picture in another of its processes, into a
+    /// layer of its own inside the room the page gives it, and when the
+    /// room changes size it stretches the old picture to fill it until that
+    /// process draws again at the new size, a third of a second on. A
+    /// player that keeps its video small for longer than that while it
+    /// finds its feet (landing, Isolate.off) has its picture redrawn small,
+    /// and then stretched back up: blurred, or in part of its room, until
+    /// drawn once more. The layers are WebKit's own and unnamed outside it,
+    /// so where they can't be found there is nothing to wait for.
+    private static func picturesFit(_ web: WKWebView) -> Bool {
+        func fits(_ layer: CALayer) -> Bool {
+            if String(describing: type(of: layer)) == "WebAVPlayerLayer" {
+                for host in layer.sublayers ?? [] where String(describing: type(of: host)) == "CALayerHost" {
+                    if abs(host.bounds.width - layer.bounds.width) > 2 || abs(host.bounds.height - layer.bounds.height) > 2 {
+                        return false
+                    }
+                }
+            }
+            return (layer.sublayers ?? []).allSatisfy(fits)
+        }
+        return web.layer.map(fits) ?? true
+    }
+
+    /// Over now, whatever the page says: what was waiting is done.
+    func end() {
+        let then = self.then
+        stop()
+        then?()
+    }
+
+    /// Over, and nothing done: whatever was covered went with its window.
+    func stop() {
+        clock?.invalidate()
+        clock = nil
+        then = nil
+        asking = false
+        drawn = false
+    }
+}
+
+enum Isolate {
+    /// The videos WebKit paused itself as the page went out of sight, for
+    /// `on` and NativePiP to take for playing. WebKit pauses a silent video
+    /// the moment nobody can see its page, and plays it again once somebody
+    /// can. Another desktop hides the window at once, and by the time Search
+    /// hears it has been left (Browser.appLeft) a muted video is paused, so
+    /// nothing floated; another app leaves the window on screen and the
+    /// video playing. Taken out all the same, it plays again in the little
+    /// window, or in picture in picture. One paused while the page could be
+    /// seen was paused by hand, and stays where it is.
+    static let watch = """
+    (function () {
+      if (window.__officeFloatUnseen) return;
+      var stopped = new WeakSet();
+      document.addEventListener('pause', function (e) {
+        if (e.isTrusted && document.visibilityState === 'hidden') stopped.add(e.target);
+      }, true);
+      // Seen again: WebKit has played its own again by now, and one still
+      // paused was paused by hand while out of sight, with the media keys.
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') stopped = new WeakSet();
+      }, true);
+      window.__officeFloatUnseen = function (v) { return v.paused && stopped.has(v); };
+      // The videos heard playing, for `real`: one muted since still counts.
+      var heard = new WeakSet();
+      function listen(e) {
+        var v = e.target;
+        if (v && v.tagName === 'VIDEO' && !v.paused && !v.muted && v.volume > 0) heard.add(v);
+      }
+      ['play', 'playing', 'volumechange'].forEach(function (name) {
+        document.addEventListener(name, listen, true);
+      });
+      window.__officeFloatHeard = function (v) { return heard.has(v) || (!v.muted && v.volume > 0); };
+    })();
+    """
+
+    /// Which videos float out on their own, set just before `on` looks
+    /// (Browser.lift, NativePiP.script): one somebody is watching, and not
+    /// whatever else plays on the page. YouTube's home page plays a muted
+    /// preview of the thumbnail under the pointer, and leaving the tab
+    /// floated that, then a black window once the preview ended (idea 923).
+    /// As Safari (main content: audio, about 400×300 or more) and Chrome or
+    /// Arc (audible in the last two seconds, unmuted) ask: heard, now or
+    /// earlier and muted since by hand; big enough to be watched; longer
+    /// than a loop; and not a preview in a link or a thumbnail. ⇧⌘P sets
+    /// nothing and still lifts any video playing.
+    static let real = """
+    window.__officeFloatOnly = function (v) {
+      var heard = window.__officeFloatHeard ? window.__officeFloatHeard(v) : (!v.muted && v.volume > 0);
+      if (!heard) return false;
+      if (isFinite(v.duration) && v.duration > 0 && v.duration < 10) return false;
+      var b = v.getBoundingClientRect();
+      if (v.videoWidth > 0 && b.width > 0 && b.height > 0 && b.width * b.height < 320 * 180) return false;
+      for (var up = v; up && up !== document.body && up !== document.documentElement; up = up.parentElement) {
+        if (up !== v && up.tagName === 'A' && up.hasAttribute('href')) return false;
+        var name = up.tagName + ' ' + (up.id || '') + ' ' + (typeof up.className === 'string' ? up.className : '');
+        if (/(^|[\\s_-])(preview|thumbnail)(?=$|[\\s_-])/i.test(name) || /(^|[\\s_-])(preview|thumbnail)[A-Z]/.test(name)) return false;
+      }
+      return true;
+    };
+    """
+
+    /// `on`, for a video floating out on its own: only one of the `real`.
+    static let quietly = real + on
+
+    /// Whether the floated video has gone: taken out of the page, emptied
+    /// of its source, hidden with its player, or ended a while ago with
+    /// nothing after it. YouTube's preview ended and went, and the window
+    /// held the page's black (idea 923). A second's grace for a player
+    /// swapping one video for the next (Isolate.on puts the mark back), and
+    /// ten after an end, for a player's "up next" to begin.
+    static let gone = """
+    (function () {
+      if (!document.documentElement.classList.contains('office-floating')) {
+        window.__officeFloatGone = null;
+        return false;
+      }
+      var art = !!window.__officeFloatArt;
+      function shows(v) {
+        return v.isConnected && !v.error && (v.currentSrc || v.srcObject) && v.readyState > 0
+          && (art || v.getClientRects().length > 0);
+      }
+      var v = document.querySelector('video[data-office-float]'), why = null;
+      if (!v || !shows(v)) why = 'gone';
+      else if (v.ended) why = 'ended';
+      if (why) {
+        var all = document.querySelectorAll('video');
+        for (var i = 0; i < all.length; i++) {
+          var one = all[i];
+          if (one !== v && !one.paused && !one.ended && one.readyState >= 2 && shows(one)) { why = null; break; }
+        }
+      }
+      var was = window.__officeFloatGone;
+      if (!why) { window.__officeFloatGone = null; return false; }
+      if (!was || was.why !== why) { window.__officeFloatGone = { why: why, since: Date.now() }; return false; }
+      return Date.now() - was.since >= (why === 'ended' ? 10000 : 1000);
+    })();
+    """
+
+    /// Everything but the video, out of the way. Visibility is inherited, so
+    /// hiding the body and turning it back on for the video alone leaves the
+    /// player's own machinery running untouched — which is what keeps the
+    /// stream alive where cutting the DOM about would kill it.
+    static let on = """
+    (function () {
+      var videos = document.querySelectorAll('video');
+      var unseen = window.__officeFloatUnseen || function () { return false; };
+      // Floating out on its own, only a video somebody watches (see real).
+      var only = window.__officeFloatOnly;
+      window.__officeFloatOnly = null;
+      // A video with a picture to show, before one without: YouTube Music
+      // plays a song through a video that is hidden, or has no picture at
+      // all, and shows the album's cover beside it. Floated as a video, the
+      // window showed whatever of the player was left, its buttons and tabs.
+      function pictured(v) {
+        var b = v.getBoundingClientRect();
+        return v.videoWidth > 0 && v.videoHeight > 0 && b.width > 0 && b.height > 0;
+      }
+      var best = null, area = 0, blind = null, most = 0;
+      for (var i = 0; i < videos.length; i++) {
+        var v = videos[i];
+        if ((v.paused && !unseen(v)) || v.ended || v.readyState < 2) continue;
+        if (only && !only(v)) continue;
+        var box = v.getBoundingClientRect();
+        if (!pictured(v)) {
+          if (box.width * box.height >= most) { most = box.width * box.height; blind = v; }
+        } else if (box.width * box.height >= area) { area = box.width * box.height; best = v; }
+      }
+      // Such a song floats as its cover: the one the page gives the system
+      // for Now Playing, or else the largest picture in its player. With
+      // neither there is nothing to show, and nothing floats.
+      var art = document.getElementById('office-float-art');
+      if (art) art.remove();
+      window.__officeFloatArt = null;
+      if (!best && blind) {
+        var cover = coverOf(blind);
+        if (!cover) return 'none';
+        best = blind;
+        art = document.createElement('img');
+        art.id = 'office-float-art';
+        art.alt = '';
+        art.src = cover;
+        document.body.appendChild(art);
+        window.__officeFloatArt = function () {
+          var now = coverOf(best);
+          if (now && art.getAttribute('src') !== now) art.src = now;
+        };
+      }
+      function coverOf(v) {
+        try {
+          var meta = navigator.mediaSession && navigator.mediaSession.metadata;
+          var list = meta && meta.artwork ? Array.prototype.slice.call(meta.artwork) : [];
+          var pick = null, side = -1;
+          for (var a = 0; a < list.length; a++) {
+            var n = parseInt(String(list[a].sizes || '0').split('x')[0], 10) || 0;
+            if (list[a].src && n > side) { side = n; pick = list[a].src; }
+          }
+          if (pick) return pick;
+        } catch (e) {}
+        for (var up = v.parentElement; up && up !== document.body && up !== document.documentElement; up = up.parentElement) {
+          var found = null, big = 64 * 64, imgs = up.querySelectorAll('img');
+          for (var k = 0; k < imgs.length; k++) {
+            var r = imgs[k].getBoundingClientRect(), s = getComputedStyle(imgs[k]);
+            if (!imgs[k].currentSrc || s.visibility !== 'visible' || s.opacity === '0') continue;
+            if (r.width * r.height >= big) { big = r.width * r.height; found = imgs[k].currentSrc; }
+          }
+          if (found) return found;
+        }
+        return null;
+      }
+      if (!best) return 'none';
+
+      var r = best.getBoundingClientRect(), vw = best.videoWidth, vh = best.videoHeight;
+      // Where the video was in the page, at what size of page, for the
+      // landing to wait for (see off). Not while the last float is still
+      // landing: the page isn't as it was yet, and the place it is going
+      // back to is the one kept from before. And whether Twitch's chat was
+      // open, for opening it again (see off).
+      var wait = window.__officeFloatWait;
+      if (!window.__officeFloatHome || !(window.__officeFloatLanding || (wait && wait.landing && !wait.settled))) {
+        window.__officeFloatHome = {
+          box: [r.left + scrollX, r.top + scrollY, r.width, r.height],
+          size: [best.offsetWidth, best.offsetHeight],
+          wide: innerWidth, high: innerHeight,
+          chat: !!document.querySelector('.right-column:not(.right-column--collapsed) [data-a-target="right-column__toggle-collapse-btn"]')
+        };
+      }
+      var size = window.__officeFloatHome.size;
+      // And the picture in it, as `contain` fits it. Twitch's player, in its
+      // Studio mode, gives the video the page's whole height and draws the
+      // picture in the middle of it, between black bars: scaled whole, the
+      // bars took up the little window, and the picture a part of it.
+      var shown = size;
+      if (vw && vh && size[0] && size[1]) {
+        var within = Math.min(size[0] / vw, size[1] / vh);
+        shown = [vw * within, vh * within];
+      }
+
+      // A landing still waiting for its tab is called off: the page is out
+      // again.
+      window.__officeFloatLanding = null;
+      window.__officeFloatWait = null;
+      best.setAttribute('data-office-float', '');
+      var sheet = document.getElementById('office-float');
+      if (!sheet) {
+        sheet = document.createElement('style');
+        sheet.id = 'office-float';
+        (document.head || document.documentElement).appendChild(sheet);
+      }
+      sheet.textContent = [
+        'html.office-floating, html.office-floating body {',
+        'background:#000 !important; overflow:hidden !important; margin:0 !important}',
+        'html.office-floating body > * { visibility:hidden !important }',
+        'html.office-floating [data-office-float] {',
+        'visibility:visible !important; position:fixed !important;',
+        'left:0 !important; top:0 !important; right:0 !important; bottom:0 !important;',
+        'width:100vw !important; height:100vh !important;',
+        'max-width:none !important; max-height:none !important;',
+        // The player's own box and clipping must not cut off the floating picture.
+        'min-width:0 !important; min-height:0 !important; margin:0 !important; padding:0 !important; border:0 !important;',
+        'clip-path:none !important; mask:none !important; -webkit-mask:none !important;',
+        // Players such as Netflix center the element with a translation.
+        // With our top/left at zero, that moves it out of the floating window.
+        'transform:none !important; translate:none !important; rotate:none !important; scale:none !important;',
+        'opacity:1 !important; object-fit:contain !important; z-index:2147483647 !important}',
+        // Better, where WebKit can divide one length by another: the video
+        // keeps the size it had in its tab, and is only scaled to the
+        // window, its picture as large as it goes whole and in the middle,
+        // and whatever is around the picture off the window's edges. Made the
+        // window's size, its picture is redrawn at that size by another of
+        // WebKit's processes a third of a second after everything else, and
+        // until then it showed at its old size shrunk with the page, in a
+        // part of the window, before growing to fill it.
+        size[0] && size[1] ? [
+          '@supports (scale: calc(100vw / 1px)) {',
+          'html.office-floating [data-office-float] {',
+          '--office-float-by: min(calc(100vw / ' + shown[0] + 'px), calc(100vh / ' + shown[1] + 'px));',
+          'right:auto !important; bottom:auto !important; margin:0 !important; box-sizing:border-box !important;',
+          'width:' + size[0] + 'px !important; height:' + size[1] + 'px !important;',
+          'min-width:0 !important; min-height:0 !important; transform-origin:0 0 !important;',
+          'transform:translate(calc((100vw - ' + size[0] + 'px * var(--office-float-by)) / 2),',
+          ' calc((100vh - ' + size[1] + 'px * var(--office-float-by)) / 2)) scale(var(--office-float-by)) !important}}'
+        ].join('') : '',
+        // Netflix renders timed text after the video, in a layer of its own
+        // beside it or one level up. Keep it above the video without
+        // exposing the rest of the player.
+        'html.office-floating [data-office-float] ~ .player-timedtext,',
+        'html.office-floating :has(> [data-office-float]) > .player-timedtext,',
+        'html.office-floating :has([data-office-float]) > .player-timedtext {',
+        'visibility:visible !important; z-index:2147483647 !important}',
+        // Fixed or not, the video is still cut to the box of any ancestor
+        // that clips — YouTube's player does — and in a window this small
+        // that box sits partly or wholly off screen, more so on a page that
+        // was scrolled. That was the black window.
+        'html.office-floating body :has([data-office-float]) {',
+        'overflow:visible !important;',
+        // And fixed is only fixed to the window while no ancestor makes a
+        // box of its own for it: a transform, a filter, containment, a
+        // perspective, a backdrop, a container query — Twitch's player has
+        // some — and the video was placed and sized inside that box instead,
+        // part of it or none of it in the window. An ancestor drawn only
+        // when on screen (content-visibility) wasn't drawn at all once the
+        // rest of the page was hidden, and one faded out hid the video too.
+        'transform:none !important; translate:none !important; rotate:none !important; scale:none !important;',
+        'filter:none !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important;',
+        'perspective:none !important; contain:none !important; container-type:normal !important;',
+        'will-change:auto !important; content-visibility:visible !important;',
+        'clip-path:none !important; mask:none !important; -webkit-mask:none !important;',
+        'opacity:1 !important}',
+        // The player's own controls would sit under ours, and two sets of
+        // buttons on one small window is one set too many.
+        'html.office-floating [data-office-float]::-webkit-media-controls {',
+        'display:none !important}',
+        // A song's cover, over the whole window and whatever is under it.
+        'html.office-floating #office-float-art {',
+        'visibility:visible !important; display:block !important; position:fixed !important;',
+        'left:0 !important; top:0 !important; width:100vw !important; height:100vh !important;',
+        'margin:0 !important; padding:0 !important; border:0 !important; background:#000 !important;',
+        'object-fit:contain !important; opacity:1 !important; transform:none !important;',
+        'z-index:2147483647 !important; pointer-events:none !important}',
+        'html:not(.office-floating) #office-float-art { display:none !important}'
+      ].join('');
+      document.documentElement.classList.add('office-floating');
+
+      // The mark has to be defended.
+      //
+      // Everything but the marked element is hidden, so the moment a player
+      // rebuilds its DOM — and they all do, on a quality change, an ad break,
+      // a React re-render — the mark goes with the old element and the window
+      // turns pure black while still holding a perfectly live page. That is the
+      // black rectangle, and it is not an orphaned window at all.
+      //
+      // So the mark is put back on whatever is playing now, for as long as
+      // the page is out: when a video starts to play, within a quarter of a
+      // second of the page's elements changing or the mark being taken off
+      // (a player rebuilding itself does both), and every two seconds for a
+      // page that does neither. It was every quarter of a second whether
+      // anything had changed or not.
+      if (window.__officeFloatUnwatch) window.__officeFloatUnwatch();
+      clearInterval(window.__officeFloatWatch);
+      var remark = function () {
+        // The next song's cover, once the page has it.
+        if (window.__officeFloatArt) window.__officeFloatArt();
+        if (document.querySelector('[data-office-float]')) return;
+        var again = null, most = 0;
+        var all = document.querySelectorAll('video');
+        for (var j = 0; j < all.length; j++) {
+          var one = all[j];
+          if (one.paused || one.ended || one.readyState < 2) continue;
+          var shape = one.getBoundingClientRect();
+          if (shape.width * shape.height >= most) {
+            most = shape.width * shape.height;
+            again = one;
+          }
+        }
+        if (again) again.setAttribute('data-office-float', '');
+      };
+      var queued = null;
+      var changes = new MutationObserver(function () {
+        if (!queued) queued = setTimeout(function () { queued = null; remark(); }, 250);
+      });
+      changes.observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, attributeFilter: ['data-office-float']
+      });
+      // Media events don't bubble: caught on the way down.
+      document.addEventListener('playing', remark, true);
+      window.__officeFloatWatch = setInterval(remark, 2000);
+      window.__officeFloatUnwatch = function () {
+        changes.disconnect();
+        clearTimeout(queued);
+        document.removeEventListener('playing', remark, true);
+        window.__officeFloatUnwatch = null;
+      };
+
+      // Where the picture is once the rest of the page is out of the way,
+      // as large as it goes whole and in the middle, for cutting it out of a
+      // picture of the page taken then (Float.still, Browser.lift).
+      // A cover has no frame to cut out yet: the window's black until it is in.
+      if (window.__officeFloatArt) return { floating: true, page: [innerWidth, innerHeight] };
+      var whole = shown[0] && shown[1] ? shown : [vw, vh];
+      var by = Math.min(innerWidth / whole[0], innerHeight / whole[1]) || 0;
+      var alone = [(innerWidth - whole[0] * by) / 2, (innerHeight - whole[1] * by) / 2, whole[0] * by, whole[1] * by];
+      return { floating: true, alone: alone, page: [innerWidth, innerHeight] };
+    })();
+    """
+
+    /// Whether the page has settled where it now is: see `fits` and `off`,
+    /// which set what this reads.
+    static let settled = "!!(window.__officeFloatWait && window.__officeFloatWait.settled)"
+
+    /// Out in the floating window: settled once the page is laid out at the
+    /// window's size, CSS pixels, with the video alone in it. Checked as
+    /// each frame is drawn, so the frame it answers for is drawn so too.
+    static func fits(width: Double, height: Double) -> String {
+        """
+        (function () {
+          var wait = window.__officeFloatWait = { settled: false }, began = Date.now();
+          (function frame() {
+            if (window.__officeFloatWait !== wait || Date.now() - began > 3000) return;
+            var on = document.documentElement.classList.contains('office-floating');
+            if (on && Math.abs(innerWidth - \(width)) <= 2 && Math.abs(innerHeight - \(height)) <= 2) {
+              wait.settled = true;
+              return;
+            }
+            requestAnimationFrame(frame);
+          })();
+          return true;
+        })();
+        """
+    }
+
+    /// Stop or start it, and say which it is now.
+    /// Step over the bit you missed, or back to it.
+    static func skip(_ seconds: Double) -> String {
+        """
+        (function () {
+          var video = document.querySelector('[data-office-float]')
+            || document.querySelector('video');
+          if (!video) return false;
+          video.currentTime = Math.max(0, video.currentTime + (\(seconds)));
+          return true;
+        })();
+        """
+    }
+
+    /// How far through, and whether it is running.
+    static let where_ = """
+    (function () {
+      var video = document.querySelector('[data-office-float]')
+        || document.querySelector('video');
+      if (!video || !video.duration || !isFinite(video.duration)) return [0, true];
+      return [video.currentTime / video.duration, !video.paused];
+    })();
+    """
+
+    static let toggle = """
+    (function () {
+      var video = document.querySelector('[data-office-float]')
+        || document.querySelector('video');
+      if (!video) return true;
+      if (video.paused) { video.play(); } else { video.pause(); }
+      return !video.paused;
+    })();
+    """
+
+    /// Everything back as it was — once the page is back in its tab and laid
+    /// out at the tab's size. Put back at once, while the page still had
+    /// the little window's size, the player fitted the video to that, and
+    /// the tab's first frames could show it so: YouTube's, 720×240 in a
+    /// 720×405 window, dropped to a strip before it grew again (#257).
+    static let off = """
+    (function () {
+      // The engine may have put the video in its own floating window as well —
+      // some players ask for that themselves. Leaving one and not the other
+      // leaves you with two.
+      try {
+        var out = document.querySelector('video[data-office-float]')
+          || document.querySelector('video');
+        if (out) {
+          if (out.webkitPresentationMode === 'picture-in-picture') {
+            out.webkitSetPresentationMode('inline');
+          }
+          if (document.pictureInPictureElement && document.exitPictureInPicture) {
+            document.exitPictureInPicture();
+          }
+        }
+      } catch (e) {}
+
+      var root = document.documentElement;
+      var landing = window.__officeFloatLanding = {};
+      var wait = window.__officeFloatWait = { settled: false, landing: true };
+      function put() {
+        // Floated again in the meantime: that is the float's now.
+        if (window.__officeFloatLanding !== landing) return;
+        window.__officeFloatLanding = null;
+        if (window.__officeFloatUnwatch) window.__officeFloatUnwatch();
+        clearInterval(window.__officeFloatWatch);
+        window.__officeFloatWatch = null;
+        root.classList.remove('office-floating');
+        var sheet = document.getElementById('office-float');
+        if (sheet) sheet.textContent = '';
+        var video = document.querySelector('[data-office-float]');
+        if (video) video.removeAttribute('data-office-float');
+        var art = document.getElementById('office-float-art');
+        if (art) art.remove();
+        window.__officeFloatArt = null;
+        settle(video);
+        reopen();
+        redraw(video);
+      }
+      // Put back while its tab wasn't in front (the little window closed
+      // from another tab), the video was sized to the tab again only as the
+      // tab came back, and WebKit went on drawing its picture at the little
+      // window's size, in the corner of the player, until something built
+      // it anew: full screen, or a reload. Taken out of the layout for a
+      // frame once its tab is in front, it is drawn at its own size.
+      function redraw(video) {
+        if (document.visibilityState !== 'hidden') return;
+        document.addEventListener('visibilitychange', function seen() {
+          if (document.visibilityState !== 'visible') return;
+          document.removeEventListener('visibilitychange', seen);
+          // Laid out at the tab's size first.
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              if (root.classList.contains('office-floating')) return;
+              var v = video && video.isConnected ? video : document.querySelector('video');
+              if (!v) return;
+              var shown = v.style.display;
+              v.style.display = 'none';
+              requestAnimationFrame(function () { v.style.display = shown; });
+            });
+          });
+        });
+      }
+      // Twitch, in its Studio mode, folds its chat away in a page as narrow as
+      // the little window, and opens it again only when asked: back in its
+      // tab, the chat stayed shut. Asked here, if it was open as the video
+      // went out, once the page is the tab's size again.
+      function reopen() {
+        var home = window.__officeFloatHome;
+        if (!home || !home.chat || root.classList.contains('office-floating')) return;
+        if (innerWidth === wide && innerHeight === high) {
+          // Put back by the clock, its tab not in front: once it is.
+          addEventListener('resize', function again() {
+            removeEventListener('resize', again);
+            reopen();
+          });
+          return;
+        }
+        var shut = document.querySelector('.right-column--collapsed [data-a-target="right-column__toggle-collapse-btn"]');
+        if (shut) shut.click();
+      }
+      // The tab covers the page with a picture of it as it was left, until
+      // it is that again (Browser.land). Put back, the page still has the
+      // player at the size it was given in the little window, and a player
+      // such as YouTube's measures again on a clock of its own, half a
+      // second later. So: settled once the video is back where it was, at
+      // the size it was, in a page of the size it was, looked at as each
+      // frame is drawn. A window resized meanwhile has no such place to go
+      // back to, and settles once the video has kept still for 0.3 s.
+      function settle(video) {
+        var home = window.__officeFloatHome, began = Date.now(), last = null, still = 0;
+        function near(a, b) {
+          for (var i = 0; i < 4; i++) if (Math.abs(a[i] - b[i]) > 2) return false;
+          return true;
+        }
+        function done() { wait.settled = true; }
+        (function frame() {
+          if (window.__officeFloatWait !== wait) return;
+          var v = video && video.isConnected ? video : document.querySelector('video');
+          if (!home || !v || Date.now() - began > 3000) return done();
+          var r = v.getBoundingClientRect(), box = [r.left + scrollX, r.top + scrollY, r.width, r.height];
+          if (innerWidth === home.wide && innerHeight === home.high) {
+            if (near(box, home.box)) return done();
+          } else {
+            still = last && near(box, last) ? still || Date.now() : 0;
+            last = box;
+            if (still && Date.now() - still >= 300) return done();
+          }
+          requestAnimationFrame(frame);
+        })();
+      }
+      // Each frame until the page is laid out at another size than the
+      // little window's — the tab's — and its player has had that frame's
+      // resize to fit the video to it. A page not drawn, its tab no longer
+      // the one in front, is put back by the clock.
+      var wide = innerWidth, high = innerHeight, began = Date.now();
+      (function frame() {
+        if (window.__officeFloatLanding !== landing) return;
+        if (innerWidth !== wide || innerHeight !== high || Date.now() - began > 400) return put();
+        requestAnimationFrame(frame);
+      })();
+      setTimeout(put, 1000);
+      return 'landing';
+    })();
+    """
+}
