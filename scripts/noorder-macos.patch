@@ -459,7 +459,7 @@ index 968b18e..ce70da2 100644
 +        guard version.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else { return nil }
 +        let newer = version.compare(Self.version, options: .numeric) == .orderedDescending
 +        return Release(version: version, build: Self.build + (newer ? 1 : 0), archive: releaseSite,
-+                       dmg: releaseSite, notes: "Download the Mac installer from Noorder Browser Releases.", minimumSystemVersion: nil)
++                       dmg: releaseSite, sha256: nil, notes: "Download the Mac installer from Noorder Browser Releases.", minimumSystemVersion: nil)
 +    }
 +
      private var clock: Timer?
